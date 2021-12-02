@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,8 @@ type ConnConfig struct {
 	PreferSimpleProtocol bool
 
 	createdByParseConfig bool // Used to enforce created by ParseConfig rule.
+
+	loadBalance bool
 }
 
 // Copy returns a deep copy of the config that is safe to use and modify.
@@ -77,6 +80,36 @@ type Conn struct {
 	eqb  extendedQueryBuilder
 }
 
+type LoadInfo struct {
+	name        string
+	ctx         context.Context
+	config      *ConnConfig
+	controlConn *Conn
+	lastrefresh time.Time
+	hostLoad    map[string]int
+}
+
+var commonLoadInfo map[string]*LoadInfo
+
+const LB_QUERY = "SELECT * FROM yb_servers()"
+
+// var loadInfo *LoadInfo
+// var controlConn *Conn
+
+func New(ctx context.Context, config *ConnConfig) *LoadInfo {
+	info := new(LoadInfo)
+	info.name = config.Host
+	info.ctx = ctx
+	info.config = config
+	info.hostLoad = make(map[string]int)
+	return info
+}
+
+func init() {
+	commonLoadInfo = make(map[string]*LoadInfo)
+	// loadInfo = New("default")
+}
+
 // Identifier a PostgreSQL identifier or name. Identifiers can be composed of
 // multiple parts such as ["schema", "table"] or ["table", "column"].
 type Identifier []string
@@ -104,13 +137,151 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return connect(ctx, connConfig)
+	if connConfig.loadBalance {
+		log.Println("Using load balanced connection")
+		return connectLoadBalanced(ctx, connConfig)
+	} else {
+		return connect(ctx, connConfig)
+	}
 }
 
 // ConnectConfig establishes a connection with a PostgreSQL server with a configuration struct.
 // connConfig must have been created by ParseConfig.
 func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
-	return connect(ctx, connConfig)
+	if connConfig.loadBalance {
+		log.Println("Using load balanced connection")
+		return connectLoadBalanced(ctx, connConfig)
+	} else {
+		return connect(ctx, connConfig)
+	}
+}
+
+func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
+	// todo take lock
+	log.Printf("config.Host %s", config.Host)
+	li, ok := commonLoadInfo[config.Host]
+	if !ok { // there is no loadInfo available for this config. Create one.
+		log.Println("Load Info not available, initializing it...")
+		commonLoadInfo[config.Host] = New(ctx, config)
+		li := commonLoadInfo[config.Host]
+
+		li.controlConn, err = connect(ctx, config)
+		if err != nil {
+			log.Fatalf("Could not connect to %s", config.Host)
+			delete(commonLoadInfo, config.Host)
+			return nil, err
+		}
+
+		rows, err := li.controlConn.Query(ctx, LB_QUERY)
+		if err != nil {
+			log.Fatalf("Could not query load information: %s", err.Error())
+			return nil, err
+		}
+		defer rows.Close()
+		var host, nodeType, cloud, region, zone, publicIP, leastLoaded string
+		var port, numConns int
+		for rows.Next() {
+			err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
+			if err != nil {
+				log.Fatalf("Could not read load information %s", err.Error())
+				return nil, err
+			} else {
+				if publicIP == "" {
+					publicIP = host
+				}
+				log.Printf("Updating host info: [%s] = 0", publicIP)
+				li.hostLoad[publicIP] = 0
+				if leastLoaded == "" { // pick the first host as the least loaded since this is the first connection anyway.
+					li.hostLoad[publicIP] = 1
+					leastLoaded = publicIP
+				}
+			}
+		}
+		li.lastrefresh = time.Now()
+		log.Printf("Connecting to the least loaded server: %s ...", leastLoaded)
+		newConfig := config.Copy()
+		newConfig.Host = leastLoaded
+		return connect(ctx, newConfig)
+	}
+
+	log.Println("Load Info available, getting a load-balanaced connection...")
+	host, err := getLeastLoadedHost(li)
+	newConfig := config.Copy()
+	newConfig.Host = host
+	return connect(ctx, newConfig)
+
+	//  todo handle li.controlConn.IsClosed()
+
+	// todo ping this connection in the background to retain the connection
+	// todo release lock
+
+	// return nil, nil
+}
+
+func getLeastLoadedHost(li *LoadInfo) (string, error) {
+	if time.Now().Second()-li.lastrefresh.Second() > 300 {
+		log.Println("Refresh of load info is needed")
+		if li.controlConn.IsClosed() {
+			log.Println("Control connection is closed, creating a new one...")
+			var err error
+			li.controlConn, err = connect(li.ctx, li.config)
+			if err != nil {
+				log.Fatal("")
+			}
+		}
+
+		rows, err := li.controlConn.Query(li.ctx, LB_QUERY)
+		if err != nil {
+			log.Fatalf("Could not query load information: %s", err.Error())
+			return "", err
+		}
+		defer rows.Close()
+		var host, nodeType, cloud, region, zone, publicIP, leastLoaded string
+		var port, numConns int
+		leastCnt := -1
+		newMap := make(map[string]int)
+		for rows.Next() {
+			err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
+			if err != nil {
+				log.Fatalf("Could not read load information: %s", err.Error())
+				return "", err
+			} else {
+				if publicIP == "" {
+					publicIP = host
+				}
+				cnt := li.hostLoad[publicIP]
+				log.Printf("Updating host info: [%s] = %d", publicIP, cnt)
+				newMap[publicIP] = cnt
+				if leastCnt == -1 || cnt < leastCnt {
+					leastCnt = cnt
+					leastLoaded = publicIP
+				}
+			}
+		}
+		li.hostLoad = newMap
+		return leastLoaded, nil
+	}
+
+	log.Println("Refresh of load info is not needed")
+	leastCnt := -1
+	leastLoaded := ""
+	for k := range li.hostLoad {
+		if leastCnt == -1 || li.hostLoad[k] < leastCnt {
+			leastCnt = li.hostLoad[k]
+			leastLoaded = k
+		}
+	}
+	log.Printf("Least loaded host %s with connection count %d", leastLoaded, leastCnt)
+	li.hostLoad[leastLoaded] = leastCnt + 1
+	return leastLoaded, nil
+}
+
+func ClearLoadBalanceInfo() {
+	// take lock
+	for k := range commonLoadInfo {
+		delete(commonLoadInfo, k)
+	}
+	// release lock
 }
 
 // ParseConfig creates a ConnConfig from a connection string. ParseConfig handles all options that pgconn.ParseConfig
@@ -127,6 +298,8 @@ func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 //
 //	prefer_simple_protocol
 //		Possible values: "true" and "false". Use the simple protocol instead of extended protocol. Default: false
+//  load_balance
+//      Possible values: "true" and "false". Default: true
 func ParseConfig(connString string) (*ConnConfig, error) {
 	config, err := pgconn.ParseConfig(connString)
 	if err != nil {
@@ -173,6 +346,17 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		}
 	}
 
+	loadBalance := true
+	if s, ok := config.RuntimeParams["load_balance"]; ok {
+		log.Println("load balance property found!")
+		delete(config.RuntimeParams, "load_balance")
+		if b, err := strconv.ParseBool(s); err == nil {
+			preferSimpleProtocol = b
+		} else {
+			return nil, fmt.Errorf("invalid load_balance: %v", err)
+		}
+	}
+
 	connConfig := &ConnConfig{
 		Config:               *config,
 		createdByParseConfig: true,
@@ -180,6 +364,7 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		BuildStatementCache:  buildStatementCache,
 		PreferSimpleProtocol: preferSimpleProtocol,
 		connString:           connString,
+		loadBalance:          loadBalance,
 	}
 
 	return connConfig, nil
@@ -248,6 +433,7 @@ func connect(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 // Close closes a connection. It is safe to call Close on a already closed
 // connection.
 func (c *Conn) Close(ctx context.Context) error {
+	log.Printf("Closing connection to %s", c.config.Host)
 	if c.IsClosed() {
 		return nil
 	}
@@ -255,6 +441,16 @@ func (c *Conn) Close(ctx context.Context) error {
 	err := c.pgConn.Close(ctx)
 	if c.shouldLog(LogLevelInfo) {
 		c.log(ctx, LogLevelInfo, "closed connection", nil)
+	}
+
+	for k := range commonLoadInfo {
+		for h := range commonLoadInfo[k].hostLoad {
+			if h == c.config.Host {
+				cnt := commonLoadInfo[k].hostLoad[h]
+				log.Printf("Decrementing count (%d) for %s by 1", cnt, h)
+				commonLoadInfo[k].hostLoad[h] = cnt - 1
+			}
+		}
 	}
 	return err
 }
