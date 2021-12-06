@@ -2,8 +2,11 @@ package pgx
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,6 +17,7 @@ type LoadInfo struct {
 	controlConn *Conn
 	lastrefresh time.Time
 	hostLoad    map[string]int
+	zoneList    map[string][]string
 }
 
 type lbHost struct {
@@ -37,6 +41,7 @@ func New(ctx context.Context, config *ConnConfig) *LoadInfo {
 	info.ctx = ctx
 	info.config = config
 	info.hostLoad = make(map[string]int)
+	info.zoneList = make(map[string][]string)
 	log.Println("returning New LoadInfo ...")
 	return info
 }
@@ -71,8 +76,8 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 			}
 			continue
 		}
-		old, okk := commonLoadInfo[new.config.Host]
-		if !okk {
+		old, ok := commonLoadInfo[new.config.Host]
+		if !ok {
 			// There is no loadInfo available for this config. Create one.
 			log.Println("Load Info not available in map, initializing it...")
 			li := new
@@ -99,6 +104,7 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 				continue
 			}
 			defer rows.Close()
+
 			var host, nodeType, cloud, region, zone, publicIP, leastLoaded string
 			var port, numConns int
 			for rows.Next() {
@@ -112,15 +118,36 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 					if publicIP == "" {
 						publicIP = host
 					}
+					hosts, ok := li.zoneList[region+"."+zone]
+					if !ok {
+						log.Println("Zonelist for " + region + "." + zone + " not found, initializing it...")
+						hosts = make([]string, 0)
+					}
+					hosts = append(hosts, publicIP)
+					li.zoneList[region+"."+zone] = hosts
+					log.Printf("Added %s to zonelist", publicIP)
+
 					log.Printf("Updating host info: [%s] = 0", publicIP)
 					li.hostLoad[publicIP] = 0
-					if leastLoaded == "" { // pick the first host as the least loaded since this is the first connection anyway.
-						li.hostLoad[publicIP] = 1
-						leastLoaded = publicIP
+					// pick the first host as the least loaded since this is the first connection anyway.
+					if leastLoaded == "" {
+						if li.config.topologyKeys == "" {
+							li.hostLoad[publicIP] = 1
+							leastLoaded = publicIP
+						} else if li.config.topologyKeys == fmt.Sprintf("%s.%s", region, zone) {
+							li.hostLoad[publicIP] = 1
+							leastLoaded = publicIP
+						}
 					}
 				}
 			}
 			li.lastrefresh = time.Now()
+			for k := range li.zoneList {
+				fmt.Printf("\nzonelist-" + k + ": ")
+				for _, e := range li.zoneList[k] {
+					fmt.Print(e + ", ")
+				}
+			}
 			log.Printf("Found the least loaded server: %s (size of map %d)", leastLoaded, len(li.hostLoad))
 			newConfig := config.Copy()
 			newConfig.Host = leastLoaded
@@ -147,8 +174,8 @@ func init() {
 func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 
 	log.Printf("config.Host %s", config.Host)
-	newLI := New(ctx, config)
-	requestChan <- newLI
+	newLoadInfo := New(ctx, config)
+	requestChan <- newLoadInfo
 	log.Println("Written LoadInfo to channel, waiting to read lbHost now ...")
 	lbHost := <-hostChan
 	log.Printf("Received lbHost from map. Size of map %d", len(commonLoadInfo[config.Host].hostLoad))
@@ -160,6 +187,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	} else {
 		nc := config.Copy()
 		nc.Host = lbHost.hostname
+		log.Printf("Original host %s, copied config host %s", config.Host, nc.Host)
 		return connect(ctx, nc)
 	}
 
@@ -246,10 +274,11 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 			return "", err
 		}
 		defer rows.Close()
-		var host, nodeType, cloud, region, zone, publicIP, leastLoaded string
+		var host, nodeType, cloud, region, zone, publicIP string
 		var port, numConns int
-		leastCnt := -1
+		// leastCnt := -1
 		newMap := make(map[string]int)
+		li.zoneList = make(map[string][]string) // discard old zonelist. Can be optimized?
 		for rows.Next() {
 			err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
 			if err != nil {
@@ -259,31 +288,55 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 				if publicIP == "" {
 					publicIP = host
 				}
+				hosts, ok := li.zoneList[region+"."+zone]
+				if !ok {
+					hosts = make([]string, 0)
+				}
+				hosts = append(hosts, publicIP)
+				li.zoneList[region+"."+zone] = hosts
 				cnt := li.hostLoad[publicIP]
 				log.Printf("Updating host info: [%s] = %d", publicIP, cnt)
 				newMap[publicIP] = cnt
-				if leastCnt == -1 || cnt < leastCnt {
-					leastCnt = cnt
-					leastLoaded = publicIP
-				}
+				// if leastCnt == -1 || cnt < leastCnt {
+				// 	leastCnt = cnt
+				// 	leastLoaded = publicIP
+				// }
 			}
 		}
 		li.hostLoad = newMap
-		return leastLoaded, nil
+		// return leastLoaded, nil
 	}
 
-	log.Println("Refresh of load info is not needed")
+	// log.Println("Refresh of load info is not needed")
 	leastCnt := -1
 	leastLoaded := ""
-	for k := range li.hostLoad {
-		if leastCnt == -1 || li.hostLoad[k] < leastCnt {
-			leastCnt = li.hostLoad[k]
-			leastLoaded = k
+	if li.config.topologyKeys != "" {
+		for _, h := range li.zoneList[li.config.topologyKeys] {
+			if leastCnt == -1 || li.hostLoad[h] < leastCnt {
+				leastCnt = li.hostLoad[h]
+				leastLoaded = h
+			}
+		}
+	} else {
+		for h := range li.hostLoad {
+			if leastCnt == -1 || li.hostLoad[h] < leastCnt {
+				leastCnt = li.hostLoad[h]
+				leastLoaded = h
+			}
 		}
 	}
-	log.Printf("Least loaded host %s with connection count %d", leastLoaded, leastCnt)
+	log.Printf("Least loaded host %s (%s) with connection count %d", leastLoaded, li.config.topologyKeys, leastCnt)
 	li.hostLoad[leastLoaded] = leastCnt + 1
 	return leastLoaded, nil
+}
+
+func validateTopologyKeys(s string) error {
+
+	zones := strings.Split(s, ".")
+	if len(zones) != 2 {
+		return errors.New("toplogy_keys '" + s + "' not in correct format, should be specified as <regionname>.<zonename>")
+	}
+	return nil
 }
 
 func PrintHostLoad() {
@@ -297,9 +350,7 @@ func PrintHostLoad() {
 }
 
 func ClearLoadBalanceInfo() {
-	// take lock
 	for k := range commonLoadInfo {
 		delete(commonLoadInfo, k)
 	}
-	// release lock
 }
