@@ -148,11 +148,16 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 					fmt.Print(e + ", ")
 				}
 			}
-			log.Printf("Found the least loaded server: %s (size of map %d)", leastLoaded, len(li.hostLoad))
-			newConfig := config.Copy()
-			newConfig.Host = leastLoaded
-			lb := &lbHost{leastLoaded, nil}
-			out <- lb
+			if leastLoaded == "" {
+				lb := &lbHost{leastLoaded, errors.New("could not find server to connect to.")}
+				out <- lb
+			} else {
+				log.Printf("Found the least loaded server: %s (size of map %d)", leastLoaded, len(li.hostLoad))
+				newConfig := config.Copy()
+				newConfig.Host = leastLoaded
+				lb := &lbHost{leastLoaded, nil}
+				out <- lb
+			}
 			// continue
 		} else {
 			log.Printf("Load Info available, getting a load-balanaced connection (size of map %d) ...", len(old.hostLoad))
