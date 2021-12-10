@@ -32,9 +32,6 @@ const LB_QUERY = "SELECT * FROM yb_servers()"
 var requestChan chan *LoadInfo
 var hostChan chan *lbHost
 
-// var loadInfo *LoadInfo
-// var controlConn *Conn
-
 func New(ctx context.Context, config *ConnConfig) *LoadInfo {
 	info := new(LoadInfo)
 	info.clusterName = config.Host
@@ -125,9 +122,7 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 					}
 					hosts = append(hosts, publicIP)
 					li.zoneList[region+"."+zone] = hosts
-					log.Printf("Added %s to zonelist", publicIP)
 
-					log.Printf("Updating host info: [%s] = 0", publicIP)
 					li.hostLoad[publicIP] = 0
 					// pick the first host as the least loaded since this is the first connection anyway.
 					if leastLoaded == "" {
@@ -152,7 +147,6 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 				lb := &lbHost{leastLoaded, errors.New("could not find server to connect to.")}
 				out <- lb
 			} else {
-				log.Printf("Found the least loaded server: %s (size of map %d)", leastLoaded, len(li.hostLoad))
 				newConfig := config.Copy()
 				newConfig.Host = leastLoaded
 				lb := &lbHost{leastLoaded, nil}
@@ -160,7 +154,6 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 			}
 			// continue
 		} else {
-			log.Printf("Load Info available, getting a load-balanaced connection (size of map %d) ...", len(old.hostLoad))
 			host, err := getLeastLoadedHost(old)
 			lb := &lbHost{host, err}
 			out <- lb
@@ -172,18 +165,13 @@ func init() {
 	commonLoadInfo = make(map[string]*LoadInfo)
 	requestChan = make(chan *LoadInfo)
 	hostChan = make(chan *lbHost)
-	// loadInfo = New("default")
 	go produceHostName(requestChan, hostChan)
 }
 
 func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
-
-	log.Printf("config.Host %s", config.Host)
 	newLoadInfo := New(ctx, config)
 	requestChan <- newLoadInfo
-	log.Println("Written LoadInfo to channel, waiting to read lbHost now ...")
 	lbHost := <-hostChan
-	log.Printf("Received lbHost from map. Size of map %d", len(commonLoadInfo[config.Host].hostLoad))
 	if lbHost.err != nil {
 		return nil, lbHost.err
 	}
@@ -192,79 +180,13 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	} else {
 		nc := config.Copy()
 		nc.Host = lbHost.hostname
-		log.Printf("Original host %s, copied config host %s", config.Host, nc.Host)
 		return connect(ctx, nc)
 	}
-
-	/* ----------------------
-
-	// todo take lock
-	log.Printf("config.Host %s", config.Host)
-	li, ok := commonLoadInfo[config.Host]
-	if !ok { // there is no loadInfo available for this config. Create one.
-		log.Println("Load Info not available, initializing it...")
-		commonLoadInfo[config.Host] = New(ctx, config)
-		li := commonLoadInfo[config.Host]
-
-		li.controlConn, err = connect(ctx, config)
-		if err != nil {
-			log.Fatalf("Could not connect to %s", config.Host)
-			delete(commonLoadInfo, config.Host)
-			return nil, err
-		}
-
-		rows, err := li.controlConn.Query(ctx, LB_QUERY)
-		if err != nil {
-			log.Fatalf("Could not query load information: %s", err.Error())
-			return nil, err
-		}
-		defer rows.Close()
-		var host, nodeType, cloud, region, zone, publicIP, leastLoaded string
-		var port, numConns int
-		for rows.Next() {
-			err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
-			if err != nil {
-				log.Fatalf("Could not read load information %s", err.Error())
-				return nil, err
-			} else {
-				if publicIP == "" {
-					publicIP = host
-				}
-				log.Printf("Updating host info: [%s] = 0", publicIP)
-				li.hostLoad[publicIP] = 0
-				if leastLoaded == "" { // pick the first host as the least loaded since this is the first connection anyway.
-					li.hostLoad[publicIP] = 1
-					leastLoaded = publicIP
-				}
-			}
-		}
-		li.lastrefresh = time.Now()
-		log.Printf("Connecting to the least loaded server: %s ...", leastLoaded)
-		newConfig := config.Copy()
-		newConfig.Host = leastLoaded
-		return connect(ctx, newConfig)
-	}
-
-	log.Println("Load Info available, getting a load-balanaced connection...")
-	host, err := getLeastLoadedHost(li)
-	newConfig := config.Copy()
-	newConfig.Host = host
-	return connect(ctx, newConfig)
-
-	//  todo handle li.controlConn.IsClosed()
-
-	// todo ping this connection in the background to retain the connection
-	// todo release lock
-
-	// return nil, nil
-	---------------------- */
 }
 
 func getLeastLoadedHost(li *LoadInfo) (string, error) {
 	if time.Now().Second()-li.lastrefresh.Second() > 300 {
-		log.Println("Refresh of load info is needed")
 		if li.controlConn.IsClosed() {
-			log.Println("Control connection is closed, creating a new one...")
 			var err error
 			li.controlConn, err = connect(li.ctx, li.config)
 			if err != nil {
@@ -281,7 +203,6 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 		defer rows.Close()
 		var host, nodeType, cloud, region, zone, publicIP string
 		var port, numConns int
-		// leastCnt := -1
 		newMap := make(map[string]int)
 		li.zoneList = make(map[string][]string) // discard old zonelist. Can be optimized?
 		for rows.Next() {
@@ -302,17 +223,11 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 				cnt := li.hostLoad[publicIP]
 				log.Printf("Updating host info: [%s] = %d", publicIP, cnt)
 				newMap[publicIP] = cnt
-				// if leastCnt == -1 || cnt < leastCnt {
-				// 	leastCnt = cnt
-				// 	leastLoaded = publicIP
-				// }
 			}
 		}
 		li.hostLoad = newMap
-		// return leastLoaded, nil
 	}
 
-	// log.Println("Refresh of load info is not needed")
 	leastCnt := -1
 	leastLoaded := ""
 	if li.config.topologyKeys != "" {
@@ -330,13 +245,11 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 			}
 		}
 	}
-	log.Printf("Least loaded host %s (%s) with connection count %d", leastLoaded, li.config.topologyKeys, leastCnt)
 	li.hostLoad[leastLoaded] = leastCnt + 1
 	return leastLoaded, nil
 }
 
 func validateTopologyKeys(s string) error {
-
 	zones := strings.Split(s, ".")
 	if len(zones) != 2 {
 		return errors.New("toplogy_keys '" + s + "' not in correct format, should be specified as <regionname>.<zonename>")

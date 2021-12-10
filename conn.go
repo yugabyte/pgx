@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -109,7 +108,6 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 		return nil, err
 	}
 	if connConfig.loadBalance {
-		log.Println("Using load balanced connection")
 		return connectLoadBalanced(ctx, connConfig)
 	} else {
 		return connect(ctx, connConfig)
@@ -120,7 +118,6 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 // connConfig must have been created by ParseConfig.
 func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 	if connConfig.loadBalance {
-		log.Println("Using load balanced connection")
 		return connectLoadBalanced(ctx, connConfig)
 	} else {
 		return connect(ctx, connConfig)
@@ -191,7 +188,6 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 
 	loadBalance := true
 	if s, ok := config.RuntimeParams["load_balance"]; ok {
-		log.Println("load balance property found! Value: " + s)
 		delete(config.RuntimeParams, "load_balance")
 		if b, err := strconv.ParseBool(s); err == nil {
 			loadBalance = b
@@ -202,7 +198,6 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 
 	topologyKeys := ""
 	if s, ok := config.RuntimeParams["topology_keys"]; ok {
-		log.Println("topology_keys property found! Value: " + s)
 		delete(config.RuntimeParams, "topology_keys")
 		if err := validateTopologyKeys(s); err == nil {
 			topologyKeys = s
@@ -288,7 +283,6 @@ func connect(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 // Close closes a connection. It is safe to call Close on a already closed
 // connection.
 func (c *Conn) Close(ctx context.Context) error {
-	log.Printf("Closing connection to %s", c.config.Host)
 	if c.IsClosed() {
 		return nil
 	}
@@ -302,17 +296,6 @@ func (c *Conn) Close(ctx context.Context) error {
 		clusterName: c.config.Host,
 		ctx:         nil,
 	}
-	/*
-		for k := range commonLoadInfo {
-			for h := range commonLoadInfo[k].hostLoad {
-				if h == c.config.Host {
-					cnt := commonLoadInfo[k].hostLoad[h]
-					log.Printf("Decrementing count (%d) for %s by 1", cnt, h)
-					commonLoadInfo[k].hostLoad[h] = cnt - 1
-				}
-			}
-		}
-	*/
 	return err
 }
 
