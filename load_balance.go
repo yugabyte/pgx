@@ -10,40 +10,45 @@ import (
 	"time"
 )
 
-type LoadInfo struct {
+type ClusterLoadInfo struct {
 	clusterName string
 	ctx         context.Context
 	config      *ConnConfig
 	controlConn *Conn
-	lastrefresh time.Time
-	hostLoad    map[string]int
-	zoneList    map[string][]string
+	lastRefresh time.Time
+	// map of host -> connection count
+	hostLoad map[string]int
+	// map of host -> port
+	hostPort map[string]uint16
+	// map of "region"."zone" -> slice of hostnames
+	zoneList map[string][]string
 }
 
 type lbHost struct {
 	hostname string
+	port     uint16
 	err      error
 }
 
-var commonLoadInfo map[string]*LoadInfo
+var clustersLoadInfo map[string]*ClusterLoadInfo
 
 const LB_QUERY = "SELECT * FROM yb_servers()"
 
-var requestChan chan *LoadInfo
+var requestChan chan *ClusterLoadInfo
 var hostChan chan *lbHost
 
-func New(ctx context.Context, config *ConnConfig) *LoadInfo {
-	info := new(LoadInfo)
+func New(ctx context.Context, config *ConnConfig) *ClusterLoadInfo {
+	info := new(ClusterLoadInfo)
 	info.clusterName = config.Host
 	info.ctx = ctx
 	info.config = config
 	info.hostLoad = make(map[string]int)
+	info.hostPort = make(map[string]uint16)
 	info.zoneList = make(map[string][]string)
-	log.Println("returning New LoadInfo ...")
 	return info
 }
 
-func produceHostName(in chan *LoadInfo, out chan *lbHost) {
+func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 
 	for {
 		log.Println("Waiting to read LoadInfo from channel ...")
@@ -55,25 +60,17 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 		}
 		if new.ctx == nil {
 			// This means the count needs to be decremented for the host.
-			// We don't know the cluster, so iterate through all the clusters
-			done := false
-			for k := range commonLoadInfo {
-				for h := range commonLoadInfo[k].hostLoad {
-					if h == new.clusterName { // clusterName is the hostname whose connection is closed
-						cnt := commonLoadInfo[k].hostLoad[h]
-						log.Printf("Decrementing count (%d) for %s by 1", cnt, h)
-						commonLoadInfo[k].hostLoad[h] = cnt - 1
-						done = true
-						break
-					}
-				}
-				if done {
-					break
-				}
+			names := strings.Split(new.clusterName, ",")
+			if len(names) != 2 {
+				log.Fatalf("cannot parse names to update connection count: %s", new.clusterName)
+			} else {
+				cnt := clustersLoadInfo[names[0]].hostLoad[names[1]]
+				log.Printf("Decrementing count (%d) for %s by 1", cnt, names[1])
+				clustersLoadInfo[names[0]].hostLoad[names[1]] = cnt - 1
 			}
 			continue
 		}
-		old, ok := commonLoadInfo[new.config.Host]
+		old, ok := clustersLoadInfo[new.config.Host]
 		if !ok {
 			// There is no loadInfo available for this config. Create one.
 			log.Println("Load Info not available in map, initializing it...")
@@ -81,14 +78,17 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 			ctx := li.ctx
 			config := li.config
 			var err error
-			commonLoadInfo[config.Host] = li
+			clustersLoadInfo[config.Host] = li
 			// li = commonLoadInfo[config.Host]
 
 			li.controlConn, err = connect(ctx, config)
 			if err != nil {
 				log.Fatalf("Could not connect to %s", config.Host)
-				delete(commonLoadInfo, config.Host)
-				lb := &lbHost{"", err}
+				delete(clustersLoadInfo, config.Host)
+				lb := &lbHost{
+					hostname: "",
+					err:      err,
+				}
 				out <- lb
 				continue
 			}
@@ -96,19 +96,25 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 			rows, err := li.controlConn.Query(ctx, LB_QUERY)
 			if err != nil {
 				log.Fatalf("Could not query load information: %s", err.Error())
-				lb := &lbHost{"", err}
+				lb := &lbHost{
+					hostname: "",
+					err:      err,
+				}
 				out <- lb
 				continue
 			}
 			defer rows.Close()
 
 			var host, nodeType, cloud, region, zone, publicIP, leastLoaded string
-			var port, numConns int
+			var port, numConns uint16
 			for rows.Next() {
 				err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
 				if err != nil {
 					log.Fatalf("Could not read load information %s", err.Error())
-					lb := &lbHost{"", err}
+					lb := &lbHost{
+						hostname: "",
+						err:      err,
+					}
 					out <- lb
 					break
 				} else {
@@ -124,7 +130,8 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 					li.zoneList[region+"."+zone] = hosts
 
 					li.hostLoad[publicIP] = 0
-					// pick the first host as the least loaded since this is the first connection anyway.
+					li.hostPort[publicIP] = port
+					// pick the first host as the least loaded since this would be the first connection anyway.
 					if leastLoaded == "" {
 						if li.config.topologyKeys == "" {
 							li.hostLoad[publicIP] = 1
@@ -136,7 +143,7 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 					}
 				}
 			}
-			li.lastrefresh = time.Now()
+			li.lastRefresh = time.Now()
 			for k := range li.zoneList {
 				fmt.Printf("\nzonelist-" + k + ": ")
 				for _, e := range li.zoneList[k] {
@@ -144,26 +151,37 @@ func produceHostName(in chan *LoadInfo, out chan *lbHost) {
 				}
 			}
 			if leastLoaded == "" {
-				lb := &lbHost{leastLoaded, errors.New("could not find server to connect to.")}
+				lb := &lbHost{
+					hostname: leastLoaded,
+					err:      errors.New("could not find a server to connect to"),
+				}
 				out <- lb
 			} else {
 				newConfig := config.Copy()
 				newConfig.Host = leastLoaded
-				lb := &lbHost{leastLoaded, nil}
+				lb := &lbHost{
+					hostname: leastLoaded,
+					port:     li.hostPort[leastLoaded],
+					err:      nil,
+				}
 				out <- lb
 			}
 			// continue
 		} else {
 			host, err := getLeastLoadedHost(old)
-			lb := &lbHost{host, err}
+			lb := &lbHost{
+				hostname: host,
+				port:     old.hostPort[host],
+				err:      err,
+			}
 			out <- lb
 		}
 	}
 }
 
 func init() {
-	commonLoadInfo = make(map[string]*LoadInfo)
-	requestChan = make(chan *LoadInfo)
+	clustersLoadInfo = make(map[string]*ClusterLoadInfo)
+	requestChan = make(chan *ClusterLoadInfo)
 	hostChan = make(chan *lbHost)
 	go produceHostName(requestChan, hostChan)
 }
@@ -180,12 +198,13 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	} else {
 		nc := config.Copy()
 		nc.Host = lbHost.hostname
+		nc.Port = lbHost.port
 		return connect(ctx, nc)
 	}
 }
 
-func getLeastLoadedHost(li *LoadInfo) (string, error) {
-	if time.Now().Second()-li.lastrefresh.Second() > 300 {
+func getLeastLoadedHost(li *ClusterLoadInfo) (string, error) {
+	if time.Now().Second()-li.lastRefresh.Second() > 300 {
 		if li.controlConn.IsClosed() {
 			var err error
 			li.controlConn, err = connect(li.ctx, li.config)
@@ -204,6 +223,7 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 		var host, nodeType, cloud, region, zone, publicIP string
 		var port, numConns int
 		newMap := make(map[string]int)
+		li.hostPort = make(map[string]uint16)
 		li.zoneList = make(map[string][]string) // discard old zonelist. Can be optimized?
 		for rows.Next() {
 			err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
@@ -223,6 +243,7 @@ func getLeastLoadedHost(li *LoadInfo) (string, error) {
 				cnt := li.hostLoad[publicIP]
 				log.Printf("Updating host info: [%s] = %d", publicIP, cnt)
 				newMap[publicIP] = cnt
+				li.hostPort[publicIP] = uint16(port)
 			}
 		}
 		li.hostLoad = newMap
@@ -258,17 +279,17 @@ func validateTopologyKeys(s string) error {
 }
 
 func PrintHostLoad() {
-	for k := range commonLoadInfo {
+	for k := range clustersLoadInfo {
 		str := "For cluster " + k + ": "
-		for h := range commonLoadInfo[k].hostLoad {
-			str = str + h + "=" + strconv.Itoa(commonLoadInfo[k].hostLoad[h]) + ", "
+		for h := range clustersLoadInfo[k].hostLoad {
+			str = str + h + "=" + strconv.Itoa(clustersLoadInfo[k].hostLoad[h]) + ", "
 		}
 		log.Println(str)
 	}
 }
 
 func ClearLoadBalanceInfo() {
-	for k := range commonLoadInfo {
-		delete(commonLoadInfo, k)
+	for k := range clustersLoadInfo {
+		delete(clustersLoadInfo, k)
 	}
 }

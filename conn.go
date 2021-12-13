@@ -23,7 +23,8 @@ type ConnConfig struct {
 	LogLevel LogLevel
 
 	// Original connection string that was parsed into config.
-	connString string
+	connString  string
+	controlHost string
 
 	// BuildStatementCache creates the stmtcache.Cache implementation for connections created with this config. Set
 	// to nil to disable automatic prepared statements.
@@ -213,6 +214,7 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		BuildStatementCache:  buildStatementCache,
 		PreferSimpleProtocol: preferSimpleProtocol,
 		connString:           connString,
+		controlHost:          config.Host,
 		loadBalance:          loadBalance,
 		topologyKeys:         topologyKeys,
 	}
@@ -292,8 +294,8 @@ func (c *Conn) Close(ctx context.Context) error {
 		c.log(ctx, LogLevelInfo, "closed connection", nil)
 	}
 
-	requestChan <- &LoadInfo{
-		clusterName: c.config.Host,
+	requestChan <- &ClusterLoadInfo{
+		clusterName: c.config.controlHost + "," + c.config.Host,
 		ctx:         nil,
 	}
 	return err
