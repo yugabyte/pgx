@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+const NO_SERVERS_MSG = "could not find a server to connect to"
+const MAX_RETRIES = 20
+const REFRESH_LOAD_INTERVAL = 300
+
 type ClusterLoadInfo struct {
 	clusterName string
 	ctx         context.Context
@@ -21,7 +25,8 @@ type ClusterLoadInfo struct {
 	// map of host -> port
 	hostPort map[string]uint16
 	// map of "region"."zone" -> slice of hostnames
-	zoneList map[string][]string
+	zoneList         map[string][]string
+	unavailableHosts map[string]int
 }
 
 type lbHost struct {
@@ -74,7 +79,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			}
 			continue
 		}
-		old, ok := clustersLoadInfo[new.config.Host]
+		old, ok := clustersLoadInfo[new.clusterName]
 		if !ok {
 			// There is no loadInfo available for this config. Create one.
 			log.Println("Load Info not available in map, initializing it...")
@@ -100,7 +105,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			// continue
 		} else {
 			old.config.topologyKeys = new.config.topologyKeys // Forget earlier topology-key specified.
-			out <- getLeastLoadedHost(old)
+			out <- refreshAndGetLeastLoadedHost(old, new.unavailableHosts)
 			// continue
 		}
 	}
@@ -119,6 +124,24 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		nc := config.Copy() // todo Can we avoid this copy? Is it needed since this config is likely to be unused.
 		nc.Host = lbHost.hostname
 		nc.Port = lbHost.port
+		conn, err := connect(ctx, nc)
+		for i := 1; i <= MAX_RETRIES && err != nil; i++ { // repeat until success or exhausting all hosts
+			if err.Error() == NO_SERVERS_MSG { // exhausted all servers
+				return conn, err
+			}
+			newLoadInfo.unavailableHosts = map[string]int{lbHost.hostname: 1}
+			requestChan <- newLoadInfo
+			lbHost = <-hostChan
+			if lbHost.err != nil {
+				return nil, lbHost.err
+			}
+			if lbHost.hostname == config.Host {
+				return connect(ctx, config)
+			}
+			nc.Host = lbHost.hostname
+			nc.Port = lbHost.port
+			conn, err = connect(ctx, nc)
+		}
 		return connect(ctx, nc)
 	}
 }
@@ -173,6 +196,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	}
 	li.hostLoad = newMap
 	li.lastRefresh = time.Now()
+	li.unavailableHosts = make(map[string]int) // clear the away hosts list
 	return nil
 }
 
@@ -182,22 +206,20 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	if li.config.topologyKeys != "" {
 		for _, h := range li.zoneList[li.config.topologyKeys] {
 			if leastCnt == -1 || li.hostLoad[h] < leastCnt {
-				leastCnt = li.hostLoad[h]
-				leastLoaded = h
+				leastCnt, leastLoaded = checkAwayHosts(li, h)
 			}
 		}
 	} else {
 		for h := range li.hostLoad {
 			if leastCnt == -1 || li.hostLoad[h] < leastCnt {
-				leastCnt = li.hostLoad[h]
-				leastLoaded = h
+				leastCnt, leastLoaded = checkAwayHosts(li, h)
 			}
 		}
 	}
 	if leastLoaded == "" {
 		lbh := &lbHost{
 			hostname: leastLoaded,
-			err:      errors.New("could not find a server to connect to"),
+			err:      errors.New(NO_SERVERS_MSG),
 		}
 		return lbh
 	}
@@ -210,8 +232,19 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	return lbh
 }
 
-func getLeastLoadedHost(li *ClusterLoadInfo) *lbHost {
-	if time.Now().Second()-li.lastRefresh.Second() > 300 { // todo read 300 from a const or a param
+func checkAwayHosts(li *ClusterLoadInfo, h string) (int, string) {
+	leastCnt := li.hostLoad[h]
+	leastLoaded := h
+	for awayHost := range li.unavailableHosts {
+		if leastLoaded == awayHost {
+			return -1, ""
+		}
+	}
+	return leastCnt, leastLoaded
+}
+
+func refreshAndGetLeastLoadedHost(li *ClusterLoadInfo, awayHosts map[string]int) *lbHost {
+	if time.Now().Second()-li.lastRefresh.Second() > REFRESH_LOAD_INTERVAL {
 		err := refreshLoadInfo(li)
 		if err != nil {
 			return &lbHost{
@@ -221,6 +254,9 @@ func getLeastLoadedHost(li *ClusterLoadInfo) *lbHost {
 		}
 	}
 
+	for h := range awayHosts {
+		li.unavailableHosts[h] = 1
+	}
 	return getHostWithLeastConns(li)
 }
 
