@@ -41,7 +41,7 @@ type ConnConfig struct {
 	createdByParseConfig bool // Used to enforce created by ParseConfig rule.
 
 	loadBalance  bool
-	topologyKeys string
+	topologyKeys []string
 }
 
 // Copy returns a deep copy of the config that is safe to use and modify.
@@ -187,7 +187,7 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		}
 	}
 
-	loadBalance := true
+	loadBalance := false
 	if s, ok := config.RuntimeParams["load_balance"]; ok {
 		delete(config.RuntimeParams, "load_balance")
 		if b, err := strconv.ParseBool(s); err == nil {
@@ -197,11 +197,11 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		}
 	}
 
-	topologyKeys := ""
+	var topologyKeys []string = nil
 	if s, ok := config.RuntimeParams["topology_keys"]; ok {
 		delete(config.RuntimeParams, "topology_keys")
-		if err := validateTopologyKeys(s); err == nil {
-			topologyKeys = s
+		if tkeys, err := validateTopologyKeys(s); err == nil {
+			topologyKeys = tkeys
 		} else {
 			return nil, fmt.Errorf("invalid topology_keys: %v", err)
 		}
@@ -294,9 +294,11 @@ func (c *Conn) Close(ctx context.Context) error {
 		c.log(ctx, LogLevelInfo, "closed connection", nil)
 	}
 
-	requestChan <- &ClusterLoadInfo{
-		clusterName: c.config.controlHost + "," + c.config.Host,
-		ctx:         nil,
+	if c.config.loadBalance {
+		requestChan <- &ClusterLoadInfo{
+			clusterName: c.config.controlHost + "," + c.config.Host,
+			ctx:         nil,
+		}
 	}
 	return err
 }

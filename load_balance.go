@@ -12,7 +12,7 @@ import (
 
 const NO_SERVERS_MSG = "could not find a server to connect to"
 const MAX_RETRIES = 20
-const REFRESH_LOAD_INTERVAL = 300
+const REFRESH_INTERVAL_SECONDS = 300
 
 type ClusterLoadInfo struct {
 	clusterName string
@@ -60,7 +60,7 @@ func init() {
 func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 
 	for {
-		log.Println("Waiting to read LoadInfo from channel ...")
+		log.Println("Listening on requestChannel ...")
 		new, ok := <-in
 
 		if !ok {
@@ -73,9 +73,15 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			if len(names) != 2 {
 				log.Fatalf("cannot parse names to update connection count: %s", new.clusterName)
 			} else {
-				cnt := clustersLoadInfo[names[0]].hostLoad[names[1]]
-				log.Printf("Decrementing count (%d) for %s by 1", cnt, names[1])
-				clustersLoadInfo[names[0]].hostLoad[names[1]] = cnt - 1
+				cli, ok := clustersLoadInfo[names[0]]
+				if ok {
+					cnt := cli.hostLoad[names[1]]
+					log.Printf("Decrementing count (%d) for %s by 1", cnt, names[1])
+					if cnt == 0 {
+						log.Fatalf("connection count for %s going negative!", names[1])
+					}
+					clustersLoadInfo[names[0]].hostLoad[names[1]] = cnt - 1
+				}
 			}
 			continue
 		}
@@ -125,7 +131,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		nc.Host = lbHost.hostname
 		nc.Port = lbHost.port
 		conn, err := connect(ctx, nc)
-		for i := 1; i <= MAX_RETRIES && err != nil; i++ { // repeat until success or exhausting all hosts
+		for i := 0; i < MAX_RETRIES && err != nil; i++ { // repeat until success or exhausting all hosts
 			if err.Error() == NO_SERVERS_MSG { // exhausted all servers
 				return conn, err
 			}
@@ -182,12 +188,13 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			if publicIP == "" {
 				publicIP = host
 			}
-			hosts, ok := li.zoneList[region+"."+zone]
+			tk := cloud + "." + region + "." + zone
+			hosts, ok := li.zoneList[tk]
 			if !ok {
 				hosts = make([]string, 0)
 			}
 			hosts = append(hosts, publicIP)
-			li.zoneList[region+"."+zone] = hosts
+			li.zoneList[tk] = hosts
 			cnt := li.hostLoad[publicIP]
 			log.Printf("Updating host info: [%s] = %d", publicIP, cnt)
 			newMap[publicIP] = cnt
@@ -203,10 +210,12 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	leastCnt := -1
 	leastLoaded := ""
-	if li.config.topologyKeys != "" {
-		for _, h := range li.zoneList[li.config.topologyKeys] {
-			if leastCnt == -1 || li.hostLoad[h] < leastCnt {
-				leastCnt, leastLoaded = checkAwayHosts(li, h)
+	if li.config.topologyKeys != nil {
+		for _, tk := range li.config.topologyKeys {
+			for _, h := range li.zoneList[tk] {
+				if leastCnt == -1 || li.hostLoad[h] < leastCnt {
+					leastCnt, leastLoaded = checkAwayHosts(li, h)
+				}
 			}
 		}
 	} else {
@@ -244,7 +253,7 @@ func checkAwayHosts(li *ClusterLoadInfo, h string) (int, string) {
 }
 
 func refreshAndGetLeastLoadedHost(li *ClusterLoadInfo, awayHosts map[string]int) *lbHost {
-	if time.Now().Second()-li.lastRefresh.Second() > REFRESH_LOAD_INTERVAL {
+	if time.Now().Second()-li.lastRefresh.Second() > REFRESH_INTERVAL_SECONDS {
 		err := refreshLoadInfo(li)
 		if err != nil {
 			return &lbHost{
@@ -260,12 +269,17 @@ func refreshAndGetLeastLoadedHost(li *ClusterLoadInfo, awayHosts map[string]int)
 	return getHostWithLeastConns(li)
 }
 
-func validateTopologyKeys(s string) error {
-	zones := strings.Split(s, ".")
-	if len(zones) != 2 {
-		return errors.New("toplogy_keys '" + s + "' not in correct format, should be specified as <regionname>.<zonename>")
+// expects the toplogykeys in the format 'cloud1.region1.zone1,cloud1.region1.zone2,...'
+func validateTopologyKeys(s string) ([]string, error) {
+	tkeys := strings.Split(s, ",")
+	for _, tk := range tkeys {
+		zones := strings.Split(tk, ".")
+		if len(zones) != 3 {
+			return nil, errors.New("toplogy_keys '" + s +
+				"' not in correct format, should be specified as '<cloud>.<region>.<zone>,...'")
+		}
 	}
-	return nil
+	return tkeys, nil
 }
 
 func PrintHostLoad() {
