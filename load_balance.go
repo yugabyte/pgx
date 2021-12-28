@@ -3,8 +3,8 @@ package pgx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -85,7 +85,6 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 		old, present := clustersLoadInfo[new.clusterName]
 		if !present {
 			// There is no loadInfo available for this config. Create one.
-			log.Println("Load info not available, initializing it ...")
 
 			err := refreshLoadInfo(new)
 			if err != nil {
@@ -98,13 +97,6 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			}
 			clustersLoadInfo[new.config.Host] = new
 
-			// for z := range new.zoneList {
-			// 	msg := fmt.Sprintf("Servers in [%s]: ", z)
-			// 	for _, s := range new.zoneList[z] {
-			// 		msg = msg + fmt.Sprintf("%s, ", s)
-			// 	}
-			// 	log.Println(msg)
-			// }
 			out <- getHostWithLeastConns(new)
 			// continue
 		} else {
@@ -140,7 +132,9 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		conn, err := connect(ctx, newConfig)
 		for i := 0; i < MAX_RETRIES && err != nil; i++ {
 			decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-			log.Printf("Could not connect to %s (%s), retrying ...", lbHost.hostname, err.Error())
+			if conn != nil && conn.shouldLog(LogLevelWarn) {
+				conn.log(ctx, LogLevelWarn, err.Error()+", retrying ...", nil)
+			}
 			newLoadInfo.unavailableHosts = map[string]int{lbHost.hostname: 1}
 			requestChan <- newLoadInfo
 			lbHost = <-hostChan
@@ -305,12 +299,25 @@ func validateTopologyKeys(s string) ([]string, error) {
 }
 
 func PrintHostLoad() {
-	for k := range clustersLoadInfo {
+	for k, cli := range clustersLoadInfo {
 		str := "Current load on cluster (" + k + "): "
-		for h := range clustersLoadInfo[k].hostLoad {
-			str = str + h + "=" + strconv.Itoa(clustersLoadInfo[k].hostLoad[h]) + ", "
+		for h, c := range cli.hostLoad {
+			str = str + fmt.Sprintf("\n%-30s:%5d", h, c)
 		}
 		log.Println(str)
+	}
+}
+
+func PrintAZInfo() {
+	for k, cli := range clustersLoadInfo {
+		str := "AZ details on cluster (" + k + "): "
+		for z, hosts := range cli.zoneList {
+			str = str + fmt.Sprintf("\nAZ [%s]: ", z)
+			for _, s := range hosts {
+				str = str + fmt.Sprintf("%s, ", s)
+			}
+			log.Println(str)
+		}
 	}
 }
 

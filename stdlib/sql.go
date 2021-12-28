@@ -65,7 +65,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/yugabyte/pgx/v4"
 )
 
 // Only intrinsic types should be binary format with database/sql.
@@ -140,6 +140,7 @@ func OptionResetSession(rs func(context.Context, *pgx.Conn) error) OptionOpenDB 
 // CockroachDB. If you use this you likely should set https://golang.org/pkg/database/sql/#DB.SetConnMaxLifetime as well
 // to ensure that connections are periodically rebalanced across your nodes.
 func RandomizeHostOrderFunc(ctx context.Context, connConfig *pgx.ConnConfig) error {
+	// what does the comment mean?
 	if len(connConfig.Fallbacks) == 0 {
 		return nil
 	}

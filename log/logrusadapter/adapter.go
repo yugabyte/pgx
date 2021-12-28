@@ -5,8 +5,8 @@ package logrusadapter
 import (
 	"context"
 
-	"github.com/jackc/pgx/v4"
 	"github.com/sirupsen/logrus"
+	"github.com/yugabyte/pgx/v4"
 )
 
 type Logger struct {

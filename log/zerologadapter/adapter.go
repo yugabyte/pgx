@@ -4,8 +4,8 @@ package zerologadapter
 import (
 	"context"
 
-	"github.com/jackc/pgx/v4"
 	"github.com/rs/zerolog"
+	"github.com/yugabyte/pgx/v4"
 )
 
 type Logger struct {
