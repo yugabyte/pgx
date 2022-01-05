@@ -3,7 +3,6 @@ package pgx
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -298,29 +297,7 @@ func validateTopologyKeys(s string) ([]string, error) {
 	return tkeys, nil
 }
 
-func PrintHostLoad() {
-	for k, cli := range clustersLoadInfo {
-		str := "Current load on cluster (" + k + "): "
-		for h, c := range cli.hostLoad {
-			str = str + fmt.Sprintf("\n%-30s:%5d", h, c)
-		}
-		log.Println(str)
-	}
-}
-
-func PrintAZInfo() {
-	for k, cli := range clustersLoadInfo {
-		str := "AZ details on cluster (" + k + "): "
-		for z, hosts := range cli.zoneList {
-			str = str + fmt.Sprintf("\nAZ [%s]: ", z)
-			for _, s := range hosts {
-				str = str + fmt.Sprintf("%s, ", s)
-			}
-			log.Println(str)
-		}
-	}
-}
-
+// For test purpose
 func GetHostLoad() map[string]map[string]int {
 	hl := make(map[string]map[string]int)
 	for cluster := range clustersLoadInfo {
@@ -332,8 +309,22 @@ func GetHostLoad() map[string]map[string]int {
 	return hl
 }
 
+// For test purpose
+func GetAZInfo() map[string]map[string][]string {
+	az := make(map[string]map[string][]string)
+	for n, cli := range clustersLoadInfo {
+		az[n] = make(map[string][]string)
+		for z, hosts := range cli.zoneList {
+			newzl := make([]string, len(hosts))
+			copy(newzl, hosts)
+			az[n][z] = newzl
+		}
+	}
+	return az
+}
+
+// For test purpose
 func ClearLoadBalanceInfo() {
-	// For test purpose
 	for k := range clustersLoadInfo {
 		delete(clustersLoadInfo, k)
 	}
