@@ -3,7 +3,9 @@ package pgx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -84,7 +86,6 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 		old, present := clustersLoadInfo[new.clusterName]
 		if !present {
 			// There is no loadInfo available for this config. Create one.
-
 			err := refreshLoadInfo(new)
 			if err != nil {
 				lb := &lbHost{
@@ -99,7 +100,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			out <- getHostWithLeastConns(new)
 			// continue
 		} else {
-			old.config.topologyKeys = new.config.topologyKeys // Forget earlier topology-keys specified.
+			old.config.topologyKeys = new.config.topologyKeys // Use the provided topology-keys.
 			out <- refreshAndGetLeastLoadedHost(old, new.unavailableHosts)
 			// continue
 		}
@@ -120,8 +121,14 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		}
 		return conn, err
 	} else {
-		// todo: If multiple hosts are specified in the url, this logic may break
-		newConnString := strings.Replace(config.connString, config.Host, lbHost.hostname, -1)
+		var newConnString string
+		if strings.Contains(config.connString, "@") {
+			pattern := regexp.MustCompile("@([^/]*)/")
+			newConnString = pattern.ReplaceAllString(config.connString, fmt.Sprintf("@%s:%d/", lbHost.hostname, lbHost.port))
+		} else {
+			pattern := regexp.MustCompile("://([^/]*)/")
+			newConnString = pattern.ReplaceAllString(config.connString, fmt.Sprintf("://%s:%d/", lbHost.hostname, lbHost.port))
+		}
 		newConfig, err := ParseConfig(newConnString)
 		if err != nil {
 			return nil, err
