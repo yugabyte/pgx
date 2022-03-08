@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +14,15 @@ import (
 const NO_SERVERS_MSG = "could not find a server to connect to"
 const MAX_RETRIES = 20
 const REFRESH_INTERVAL_SECONDS = 300
+
+// Values for ClusterLoadInfo.flags
+const USE_HOSTS byte = 0
+const USE_PUBLIC_IP byte = 1
+const TRY_HOSTS_PUBLIC_IP byte = 2
+const HOSTS_EXHAUSTED byte = 3
+const GET_LB_CONN byte = 4
+const DECREMENT_COUNT byte = 5
+const DUMP_LB_INFO byte = 6
 
 type ClusterLoadInfo struct {
 	clusterName string
@@ -24,9 +34,13 @@ type ClusterLoadInfo struct {
 	hostLoad map[string]int
 	// map of host -> port
 	hostPort map[string]uint16
-	// map of "region"."zone" -> slice of hostnames
-	zoneList         map[string][]string
+	// map of "cloud.region.zone" -> slice of hostnames
+	zoneList map[string][]string
+	// map of host -> int
 	unavailableHosts map[string]int
+	// map of (private -> public) address of a node.
+	hostPairs map[string]string
+	flags     byte
 }
 
 type lbHost struct {
@@ -44,7 +58,20 @@ var hostChan chan *lbHost
 
 func NewClusterLoadInfo(ctx context.Context, config *ConnConfig) *ClusterLoadInfo {
 	info := new(ClusterLoadInfo)
-	info.clusterName = config.Host
+	ips, err := net.LookupIP(config.Host)
+	if err == nil {
+		for _, ip := range ips {
+			if hostIP := ip.To4(); hostIP != nil {
+				info.clusterName = hostIP.String()
+				break
+			} else if hostIP = ip.To16(); hostIP != nil {
+				info.clusterName = hostIP.String()
+				break
+			}
+		}
+	} else {
+		info.clusterName = config.Host
+	}
 	info.ctx = ctx
 	info.config = config
 	return info
@@ -57,17 +84,37 @@ func init() {
 	go produceHostName(requestChan, hostChan)
 }
 
+func replaceHostString(connString string, newHost string, port uint16) string {
+	newConnString := connString
+	if strings.HasPrefix(connString, "postgres://") || strings.HasPrefix(connString, "postgresql://") {
+		if strings.Contains(connString, "@") {
+			pattern := regexp.MustCompile("@([^/]*)/")
+			// todo IPv6 handling
+			newConnString = pattern.ReplaceAllString(connString, fmt.Sprintf("@%s:%d/", newHost, port))
+		} else {
+			pattern := regexp.MustCompile("://([^/]*)/")
+			newConnString = pattern.ReplaceAllString(connString, fmt.Sprintf("://%s:%d/", newHost, port))
+		}
+	} else { // key = value (DSN style)
+		pattern := regexp.MustCompile("host=([^/]*) ")
+		newConnString = pattern.ReplaceAllString(connString, fmt.Sprintf("host=%s ", newHost))
+		pattern = regexp.MustCompile("port=([^/]*) ")
+		newConnString = pattern.ReplaceAllString(newConnString, fmt.Sprintf("port=%d ", port))
+	}
+	return newConnString
+}
+
 func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 
 	for {
 		new, present := <-in
 
 		if !present {
-			log.Println("requestChannel closed")
+			log.Println("The requestChannel is closed, load_balance feature will not work")
 			break
 		}
 		if new.ctx == nil {
-			// This means the count needs to be decremented for the host.
+			// nil ctx is sent when the count needs to be decremented for the host.
 			names := strings.Split(new.clusterName, ",")
 			if len(names) != 2 {
 				log.Printf("cannot parse names to update connection count: %s", new.clusterName)
@@ -95,6 +142,25 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 				out <- lb
 				continue
 			}
+			publicIpAvailable := false
+			for k, v := range new.hostPairs {
+				if v != "" {
+					publicIpAvailable = true
+				}
+				if new.clusterName == k {
+					new.flags = USE_HOSTS
+					break
+				} else if new.clusterName == v {
+					new.flags = USE_PUBLIC_IP
+					break
+				} else {
+					new.flags = TRY_HOSTS_PUBLIC_IP
+				}
+			}
+			if !publicIpAvailable {
+				new.flags = USE_HOSTS
+			}
+
 			clustersLoadInfo[new.config.Host] = new
 
 			out <- getHostWithLeastConns(new)
@@ -112,7 +178,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	requestChan <- newLoadInfo
 	lbHost := <-hostChan
 	if lbHost.err != nil {
-		return nil, lbHost.err
+		return connect(ctx, config) // fallback to original behaviour
 	}
 	if lbHost.hostname == config.Host {
 		conn, err := connect(ctx, config)
@@ -121,14 +187,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		}
 		return conn, err
 	} else {
-		var newConnString string
-		if strings.Contains(config.connString, "@") {
-			pattern := regexp.MustCompile("@([^/]*)/")
-			newConnString = pattern.ReplaceAllString(config.connString, fmt.Sprintf("@%s:%d/", lbHost.hostname, lbHost.port))
-		} else {
-			pattern := regexp.MustCompile("://([^/]*)/")
-			newConnString = pattern.ReplaceAllString(config.connString, fmt.Sprintf("://%s:%d/", lbHost.hostname, lbHost.port))
-		}
+		newConnString := replaceHostString(config.connString, lbHost.hostname, lbHost.port)
 		newConfig, err := ParseConfig(newConnString)
 		if err != nil {
 			return nil, err
@@ -138,16 +197,14 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		conn, err := connect(ctx, newConfig)
 		for i := 0; i < MAX_RETRIES && err != nil; i++ {
 			decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-			if conn != nil && conn.shouldLog(LogLevelWarn) {
-				conn.log(ctx, LogLevelWarn, err.Error()+", retrying ...", nil)
-			}
+			log.Println(err.Error() + ", retrying ...")
 			newLoadInfo.unavailableHosts = map[string]int{lbHost.hostname: 1}
 			requestChan <- newLoadInfo
 			lbHost = <-hostChan
 			if lbHost.err != nil {
 				return nil, lbHost.err
 			}
-			if lbHost.hostname == newConfig.Host { // will always fail if multiple hostnames specified
+			if lbHost.hostname == newConfig.Host {
 				conn, err := connect(ctx, newConfig)
 				if err != nil {
 					decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
@@ -182,13 +239,27 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		var err error
 		li.controlConn, err = connect(li.ctx, li.config)
 		if err != nil {
-			log.Printf("Could not connect to %s", li.config.Host)
+			log.Printf("Could not create control connect to %s\n", li.config.Host)
 			// remove its hostLoad entry
 			cli, ok := clustersLoadInfo[li.config.Host]
 			if ok {
 				delete(cli.hostLoad, li.config.Host)
 			}
-			return err
+			// Attempt connection to other servers which are already fetched in cli.
+			if len(li.hostPairs) > 0 {
+				log.Println("Attempting control connection to other servers ...")
+			}
+			for h := range li.hostPairs {
+				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
+				if config, err := ParseConfig(newConnString); err == nil {
+					if li.controlConn, err = connect(li.ctx, config); err == nil {
+						break
+					}
+				}
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// defer li.controlConn.Close(li.ctx)
@@ -201,31 +272,30 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	defer rows.Close()
 	var host, nodeType, cloud, region, zone, publicIP string
 	var port, numConns int
-	newMap := make(map[string]int)
+	newHostLoad := make(map[string]int)
 	li.hostPort = make(map[string]uint16)
 	li.zoneList = make(map[string][]string)
+	li.hostPairs = make(map[string]string)
 	for rows.Next() {
 		err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
 		if err != nil {
 			log.Printf("Could not read load information: %s", err.Error())
 			return err
 		} else {
-			if publicIP == "" {
-				publicIP = host
-			}
+			li.hostPairs[host] = publicIP
 			tk := cloud + "." + region + "." + zone
 			hosts, ok := li.zoneList[tk]
 			if !ok {
 				hosts = make([]string, 0)
 			}
-			hosts = append(hosts, publicIP)
+			hosts = append(hosts, host)
 			li.zoneList[tk] = hosts
-			cnt := li.hostLoad[publicIP]
-			newMap[publicIP] = cnt
-			li.hostPort[publicIP] = uint16(port)
+			cnt := li.hostLoad[host]
+			newHostLoad[host] = cnt
+			li.hostPort[host] = uint16(port)
 		}
 	}
-	li.hostLoad = newMap
+	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
 	li.unavailableHosts = make(map[string]int) // clear the away hosts list
 	return nil
@@ -250,14 +320,33 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		}
 	}
 	if leastLoaded == "" {
+		if li.flags == TRY_HOSTS_PUBLIC_IP {
+			// remove all host (private ips) from unavailable list
+			for h := range li.hostPairs {
+				delete(li.unavailableHosts, h)
+			}
+			li.flags = HOSTS_EXHAUSTED
+			return getHostWithLeastConns(li)
+		}
 		lbh := &lbHost{
-			hostname: leastLoaded,
+			hostname: "",
 			err:      errors.New(NO_SERVERS_MSG),
 		}
 		return lbh
 	}
+	leastLoadedToUse := leastLoaded
+	if li.flags == USE_PUBLIC_IP || li.flags == HOSTS_EXHAUSTED {
+		leastLoadedToUse = li.hostPairs[leastLoaded]
+		if leastLoadedToUse == "" {
+			lbh := &lbHost{
+				hostname: "",
+				err:      errors.New(NO_SERVERS_MSG),
+			}
+			return lbh
+		}
+	}
 	lbh := &lbHost{
-		hostname: leastLoaded,
+		hostname: leastLoadedToUse,
 		port:     li.hostPort[leastLoaded],
 		err:      nil,
 	}
@@ -267,7 +356,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 
 func isHostAway(li *ClusterLoadInfo, h string) bool {
 	for awayHost := range li.unavailableHosts {
-		if h == awayHost {
+		if h == awayHost || h == li.hostPairs[awayHost] {
 			return true
 		}
 	}
