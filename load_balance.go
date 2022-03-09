@@ -58,23 +58,25 @@ var hostChan chan *lbHost
 
 func NewClusterLoadInfo(ctx context.Context, config *ConnConfig) *ClusterLoadInfo {
 	info := new(ClusterLoadInfo)
-	ips, err := net.LookupIP(config.Host)
+	info.clusterName = LookupIP(config.Host)
+	info.ctx = ctx
+	info.config = config
+	info.flags = GET_LB_CONN
+	return info
+}
+
+func LookupIP(host string) string {
+	ips, err := net.LookupIP(host)
 	if err == nil {
 		for _, ip := range ips {
 			if hostIP := ip.To4(); hostIP != nil {
-				info.clusterName = hostIP.String()
-				break
+				return hostIP.String()
 			} else if hostIP = ip.To16(); hostIP != nil {
-				info.clusterName = hostIP.String()
-				break
+				return hostIP.String()
 			}
 		}
-	} else {
-		info.clusterName = config.Host
 	}
-	info.ctx = ctx
-	info.config = config
-	return info
+	return host
 }
 
 func init() {
@@ -113,19 +115,18 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			log.Println("The requestChannel is closed, load_balance feature will not work")
 			break
 		}
-		if new.ctx == nil {
-			// nil ctx is sent when the count needs to be decremented for the host.
+		if new.flags == DECREMENT_COUNT {
 			names := strings.Split(new.clusterName, ",")
 			if len(names) != 2 {
 				log.Printf("cannot parse names to update connection count: %s", new.clusterName)
 			} else {
-				cli, ok := clustersLoadInfo[names[0]]
+				cli, ok := clustersLoadInfo[LookupIP(names[0])]
 				if ok {
 					cnt := cli.hostLoad[names[1]]
 					if cnt == 0 {
 						log.Printf("connection count for %s going negative!", names[1])
 					}
-					clustersLoadInfo[names[0]].hostLoad[names[1]] = cnt - 1
+					cli.hostLoad[names[1]] = cnt - 1
 				}
 			}
 			continue
@@ -197,7 +198,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		conn, err := connect(ctx, newConfig)
 		for i := 0; i < MAX_RETRIES && err != nil; i++ {
 			decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-			log.Println(err.Error() + ", retrying ...")
+			// log.Println(err.Error() + ", retrying ...")
 			newLoadInfo.unavailableHosts = map[string]int{lbHost.hostname: 1}
 			requestChan <- newLoadInfo
 			lbHost = <-hostChan
@@ -230,7 +231,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 func decrementConnCount(str string) {
 	requestChan <- &ClusterLoadInfo{
 		clusterName: str,
-		ctx:         nil,
+		flags:       DECREMENT_COUNT,
 	}
 }
 
@@ -417,11 +418,4 @@ func GetAZInfo() map[string]map[string][]string {
 		}
 	}
 	return az
-}
-
-// For test purpose
-func ClearLoadBalanceInfo() {
-	for k := range clustersLoadInfo {
-		delete(clustersLoadInfo, k)
-	}
 }
