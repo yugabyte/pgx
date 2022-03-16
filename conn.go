@@ -78,9 +78,10 @@ type Conn struct {
 
 	connInfo *pgtype.ConnInfo
 
-	wbuf             []byte
-	eqb              extendedQueryBuilder
-	cliUpdated       bool
+	wbuf []byte
+	eqb  extendedQueryBuilder
+
+	closeCntUpdated bool
 }
 
 // Identifier a PostgreSQL identifier or name. Identifiers can be composed of
@@ -142,7 +143,9 @@ func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 //	prefer_simple_protocol
 //		Possible values: "true" and "false". Use the simple protocol instead of extended protocol. Default: false
 //  load_balance
-//      Possible values: "true" and "false". Default: true
+//      Possible values: "true" and "false". Default: false
+//  topology_keys
+//      YugabyteDB placement information in the format "cloudname.regionname.zonename". Default: empty
 func ParseConfig(connString string) (*ConnConfig, error) {
 	config, err := pgconn.ParseConfig(connString)
 	if err != nil {
@@ -299,8 +302,8 @@ func connect(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 // connection.
 func (c *Conn) Close(ctx context.Context) error {
 	if c.IsClosed() {
-		if !c.cliUpdated && c.config.loadBalance {
-			c.cliUpdated = true
+		if !c.closeCntUpdated && c.config.loadBalance {
+			c.closeCntUpdated = true
 			decrementConnCount(c.config.controlHost + "," + c.config.Host)
 		}
 		return nil
@@ -311,8 +314,8 @@ func (c *Conn) Close(ctx context.Context) error {
 		c.log(ctx, LogLevelInfo, "closed connection", nil)
 	}
 
-	if !c.cliUpdated && c.config.loadBalance {
-		c.cliUpdated = true
+	if !c.closeCntUpdated && c.config.loadBalance {
+		c.closeCntUpdated = true
 		decrementConnCount(c.config.controlHost + "," + c.config.Host)
 	}
 	return err

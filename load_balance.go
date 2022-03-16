@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"regexp"
 	"strings"
@@ -15,14 +16,24 @@ const NO_SERVERS_MSG = "could not find a server to connect to"
 const MAX_RETRIES = 20
 const REFRESH_INTERVAL_SECONDS = 300
 
-// Values for ClusterLoadInfo.flags
+// -- Values for ClusterLoadInfo.flags --
+// Use private address (host) of tservers to create a connection
 const USE_HOSTS byte = 0
+
+// Use public address (public_ip) of tservers to create a connection
 const USE_PUBLIC_IP byte = 1
+
+// Try both the addresses (host, public_ip) of tservers to create a connection
 const TRY_HOSTS_PUBLIC_IP byte = 2
+
+// Both the addresses (host, public_ip) of tserver to be tried, but no success with private addresses to create a connection
 const HOSTS_EXHAUSTED byte = 3
+
+// Indicate to the Go routine processing the requestChan that it should return a least loaded tserver host, port
 const GET_LB_CONN byte = 4
+
+// Indicate to the Go routine processing the requestChan that it should decrease the connection count for the given host by one
 const DECREMENT_COUNT byte = 5
-const DUMP_LB_INFO byte = 6
 
 type ClusterLoadInfo struct {
 	clusterName string
@@ -53,7 +64,13 @@ var clustersLoadInfo map[string]*ClusterLoadInfo
 
 const LB_QUERY = "SELECT * FROM yb_servers()"
 
+// Only the Go routine spawned in init() reads this channel. Based on the flag, it
+// - returns the least loaded tserver's host/port (GET_LB_CONN)
+// - decrements connection count by one for closed connection (DECREMENT_COUNT)
 var requestChan chan *ClusterLoadInfo
+
+// Only the Go routine spawned in init() writes to this channel.
+// It returns the least loaded tserver's host/port if successful else err
 var hostChan chan *lbHost
 
 func NewClusterLoadInfo(ctx context.Context, config *ConnConfig) *ClusterLoadInfo {
@@ -303,19 +320,19 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 }
 
 func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
-	leastCnt := -1
+	leastCnt := int(math.MaxInt64)
 	leastLoaded := ""
 	if li.config.topologyKeys != nil {
 		for _, tk := range li.config.topologyKeys {
 			for _, h := range li.zoneList[tk] {
-				if !isHostAway(li, h) && (leastCnt == -1 || li.hostLoad[h] < leastCnt) {
+				if !isHostAway(li, h) && li.hostLoad[h] < leastCnt {
 					leastLoaded, leastCnt = h, li.hostLoad[h]
 				}
 			}
 		}
 	} else {
 		for h := range li.hostLoad {
-			if !isHostAway(li, h) && (leastCnt == -1 || li.hostLoad[h] < leastCnt) {
+			if !isHostAway(li, h) && li.hostLoad[h] < leastCnt {
 				leastLoaded, leastCnt = h, li.hostLoad[h]
 			}
 		}

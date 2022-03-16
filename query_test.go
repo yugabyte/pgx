@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgconn/stmtcache"
 	"github.com/jackc/pgtype"
-	gofrs "github.com/jackc/pgtype/ext/gofrs-uuid"
 	"github.com/yugabyte/pgx/v4"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
