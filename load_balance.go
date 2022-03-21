@@ -83,14 +83,15 @@ func NewClusterLoadInfo(ctx context.Context, config *ConnConfig) *ClusterLoadInf
 }
 
 func LookupIP(host string) string {
-	ips, err := net.LookupIP(host)
+	addrs, err := net.LookupHost(host)
 	if err == nil {
-		for _, ip := range ips {
-			if hostIP := ip.To4(); hostIP != nil {
-				return hostIP.String()
-			} else if hostIP = ip.To16(); hostIP != nil {
-				return hostIP.String()
+		for _, addr := range addrs {
+			if strings.Contains(addr, ".") {
+				return addr
 			}
+		}
+		if len(addrs) > 0 {
+			return addrs[0]
 		}
 	}
 	return host
@@ -179,7 +180,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 				new.flags = USE_HOSTS
 			}
 
-			clustersLoadInfo[new.config.Host] = new
+			clustersLoadInfo[new.clusterName] = new
 
 			out <- getHostWithLeastConns(new)
 			// continue
@@ -259,7 +260,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		if err != nil {
 			log.Printf("Could not create control connect to %s\n", li.config.Host)
 			// remove its hostLoad entry
-			cli, ok := clustersLoadInfo[li.config.Host]
+			cli, ok := clustersLoadInfo[li.clusterName]
 			if ok {
 				delete(cli.hostLoad, li.config.Host)
 			}
@@ -267,12 +268,15 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			if len(li.hostPairs) > 0 {
 				log.Println("Attempting control connection to other servers ...")
 			}
+			var config *ConnConfig
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
-				if config, err := ParseConfig(newConnString); err == nil {
+				if config, err = ParseConfig(newConnString); err == nil {
 					if li.controlConn, err = connect(li.ctx, config); err == nil {
 						break
 					}
+					delete(li.hostLoad, config.Host)
+					li.controlConn = nil
 				}
 			}
 			if err != nil {
@@ -315,7 +319,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	}
 	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
-	li.unavailableHosts = make(map[string]int) // clear the away hosts list
+	li.unavailableHosts = make(map[string]int) // clear the unavailable-hosts list
 	return nil
 }
 
@@ -368,7 +372,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		port:     li.hostPort[leastLoaded],
 		err:      nil,
 	}
-	li.hostLoad[leastLoaded] = leastCnt + 1
+	li.hostLoad[leastLoadedToUse] = leastCnt + 1
 	return lbh
 }
 
