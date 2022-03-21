@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgconn"
-	"github.com/jackc/pgx/v4"
 	"github.com/jackc/puddle"
+	"github.com/yugabyte/pgx/v4"
 )
 
 var defaultMaxConns = int32(4)
