@@ -1,5 +1,33 @@
-[![](https://godoc.org/github.com/jackc/pgx?status.svg)](https://pkg.go.dev/github.com/jackc/pgx/v4)
-[![Build Status](https://travis-ci.org/jackc/pgx.svg)](https://travis-ci.org/jackc/pgx)
+
+# YugabyteDB Go Driver
+This is a Go Driver based on [jackc/pgx](https://github.com/jackc/pgx), with following additional feature:
+
+## Connection load balancing
+
+To enable the connection load balancing, provide addtional parameter set to true as `load_balance=true` in the connection url or the connection string (DSN style).
+
+```
+"postgres://username:password@localhost:5432/database_name?load_balance=true"
+```
+With this parameter, the driver will fetch and maintain the list of tservers from the given endpoint (`localhost` in above example) available in the YugabyteDB cluster and distribute the connections equally across them.
+
+Application needs to use the same connection url to create every connection it needs, so that the distribution happens equally.
+
+### Topology aware connection load balancing
+
+Addtionally, users can also target tservers in specific zones by specifying these zones as `topology_keys` with values in the format `cloudname.regionname.zonename`. Multiple zones can be specified as comma separated values.
+
+The connections will be distributed equally with the tservers in these zones.
+
+Note that, you would need to specify `load_balance=true` even for the topology aware connection load balancing.
+
+```
+"postgres://username:password@localhost:5432/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
+```
+
+Same parameters can be specified while using the `pgxpool` API.
+
+Details about the upstream pgx driver itself (which hold true for this driver as well) are given below.
 
 # pgx - PostgreSQL Driver and Toolkit
 
