@@ -4,10 +4,10 @@ This is a Go Driver based on [jackc/pgx](https://github.com/jackc/pgx), with fol
 
 ## Connection load balancing
 
-To enable the connection load balancing, provide addtional parameter set to true as `load_balance=true` in the connection url or the connection string (DSN style).
+To enable the connection load balancing, provide additional parameter set to true as `load_balance=true` in the connection url or the connection string (DSN style).
 
 ```
-"postgres://username:password@localhost:5432/database_name?load_balance=true"
+"postgres://username:password@localhost:5433/database_name?load_balance=true"
 ```
 With this parameter, the driver will fetch and maintain the list of tservers from the given endpoint (`localhost` in above example) available in the YugabyteDB cluster and distribute the connections equally across them.
 
@@ -22,10 +22,10 @@ The connections will be distributed equally with the tservers in these zones.
 Note that, you would need to specify `load_balance=true` even for the topology aware connection load balancing.
 
 ```
-"postgres://username:password@localhost:5432/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
+"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
 ```
 
-Same parameters can be specified while using the `pgxpool` API.
+Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
 
 Details about the upstream pgx driver itself (which hold true for this driver as well) are given below.
 
@@ -57,7 +57,7 @@ import (
 )
 
 func main() {
-	// urlExample := "postgres://username:password@localhost:5432/database_name"
+	// urlExample := "postgres://username:password@localhost:5433/database_name"
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
