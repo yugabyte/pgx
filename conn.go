@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgconn/stmtcache"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4/internal/sanitize"
+	"github.com/yugabyte/pgx/v4/internal/sanitize"
 )
 
 // ConnConfig contains all the options used to establish a connection. It must be created by ParseConfig and
@@ -23,7 +23,8 @@ type ConnConfig struct {
 	LogLevel LogLevel
 
 	// Original connection string that was parsed into config.
-	connString string
+	connString  string
+	controlHost string
 
 	// BuildStatementCache creates the stmtcache.Cache implementation for connections created with this config. Set
 	// to nil to disable automatic prepared statements.
@@ -38,6 +39,10 @@ type ConnConfig struct {
 	PreferSimpleProtocol bool
 
 	createdByParseConfig bool // Used to enforce created by ParseConfig rule.
+
+	loadBalance     bool
+	topologyKeys    []string
+	refreshInterval int64
 }
 
 // Copy returns a deep copy of the config that is safe to use and modify.
@@ -75,6 +80,8 @@ type Conn struct {
 
 	wbuf []byte
 	eqb  extendedQueryBuilder
+
+	closeCntUpdated bool
 }
 
 // Identifier a PostgreSQL identifier or name. Identifiers can be composed of
@@ -104,13 +111,21 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return connect(ctx, connConfig)
+	if connConfig.loadBalance {
+		return connectLoadBalanced(ctx, connConfig)
+	} else {
+		return connect(ctx, connConfig)
+	}
 }
 
 // ConnectConfig establishes a connection with a PostgreSQL server with a configuration struct.
 // connConfig must have been created by ParseConfig.
 func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
-	return connect(ctx, connConfig)
+	if connConfig.loadBalance {
+		return connectLoadBalanced(ctx, connConfig)
+	} else {
+		return connect(ctx, connConfig)
+	}
 }
 
 // ParseConfig creates a ConnConfig from a connection string. ParseConfig handles all options that pgconn.ParseConfig
@@ -127,6 +142,10 @@ func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 //
 //	prefer_simple_protocol
 //		Possible values: "true" and "false". Use the simple protocol instead of extended protocol. Default: false
+//  load_balance
+//      Possible values: "true" and "false". Default: false
+//  topology_keys
+//      YugabyteDB placement information in the format "cloudname.regionname.zonename". Default: empty
 func ParseConfig(connString string) (*ConnConfig, error) {
 	config, err := pgconn.ParseConfig(connString)
 	if err != nil {
@@ -173,6 +192,36 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		}
 	}
 
+	loadBalance := false
+	if s, ok := config.RuntimeParams["load_balance"]; ok {
+		delete(config.RuntimeParams, "load_balance")
+		if b, err := strconv.ParseBool(s); err == nil {
+			loadBalance = b
+		} else {
+			return nil, fmt.Errorf("invalid load_balance: %v", err)
+		}
+	}
+
+	var topologyKeys []string = nil
+	if s, ok := config.RuntimeParams["topology_keys"]; ok {
+		delete(config.RuntimeParams, "topology_keys")
+		if tkeys, err := validateTopologyKeys(s); err == nil {
+			topologyKeys = tkeys
+		} else {
+			return nil, fmt.Errorf("invalid topology_keys: %v", err)
+		}
+	}
+
+	refreshInterval := int64(REFRESH_INTERVAL_SECONDS)
+	if s, ok := config.RuntimeParams["refresh_interval"]; ok {
+		delete(config.RuntimeParams, "refresh_interval")
+		if refresh, err := strconv.Atoi(s); err == nil {
+			refreshInterval = int64(refresh)
+		} else {
+			return nil, fmt.Errorf("invalid refresh_interval: %v", err)
+		}
+	}
+
 	connConfig := &ConnConfig{
 		Config:               *config,
 		createdByParseConfig: true,
@@ -180,6 +229,10 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		BuildStatementCache:  buildStatementCache,
 		PreferSimpleProtocol: preferSimpleProtocol,
 		connString:           connString,
+		controlHost:          config.Host,
+		loadBalance:          loadBalance,
+		topologyKeys:         topologyKeys,
+		refreshInterval:      refreshInterval,
 	}
 
 	return connConfig, nil
@@ -249,12 +302,21 @@ func connect(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 // connection.
 func (c *Conn) Close(ctx context.Context) error {
 	if c.IsClosed() {
+		if !c.closeCntUpdated && c.config.loadBalance {
+			c.closeCntUpdated = true
+			decrementConnCount(c.config.controlHost + "," + c.config.Host)
+		}
 		return nil
 	}
 
 	err := c.pgConn.Close(ctx)
 	if c.shouldLog(LogLevelInfo) {
 		c.log(ctx, LogLevelInfo, "closed connection", nil)
+	}
+
+	if !c.closeCntUpdated && c.config.loadBalance {
+		c.closeCntUpdated = true
+		decrementConnCount(c.config.controlHost + "," + c.config.Host)
 	}
 	return err
 }

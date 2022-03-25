@@ -1,5 +1,33 @@
-[![](https://godoc.org/github.com/jackc/pgx?status.svg)](https://pkg.go.dev/github.com/jackc/pgx/v4)
-[![Build Status](https://travis-ci.org/jackc/pgx.svg)](https://travis-ci.org/jackc/pgx)
+
+# YugabyteDB Go Driver
+This is a Go Driver based on [jackc/pgx](https://github.com/jackc/pgx), with following additional feature:
+
+## Connection load balancing
+
+To enable the connection load balancing, provide additional parameter set to true as `load_balance=true` in the connection url or the connection string (DSN style).
+
+```
+"postgres://username:password@localhost:5433/database_name?load_balance=true"
+```
+With this parameter, the driver will fetch and maintain the list of tservers from the given endpoint (`localhost` in above example) available in the YugabyteDB cluster and distribute the connections equally across them.
+
+Application needs to use the same connection url to create every connection it needs, so that the distribution happens equally.
+
+### Topology aware connection load balancing
+
+Addtionally, users can also target tservers in specific zones by specifying these zones as `topology_keys` with values in the format `cloudname.regionname.zonename`. Multiple zones can be specified as comma separated values.
+
+The connections will be distributed equally with the tservers in these zones.
+
+Note that, you would need to specify `load_balance=true` even for the topology aware connection load balancing.
+
+```
+"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
+```
+
+Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
+
+Details about the upstream pgx driver itself (which hold true for this driver as well) are given below.
 
 # pgx - PostgreSQL Driver and Toolkit
 
@@ -25,11 +53,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jackc/pgx/v4"
+	"github.com/yugabyte/pgx/v4"
 )
 
 func main() {
-	// urlExample := "postgres://username:password@localhost:5432/database_name"
+	// urlExample := "postgres://username:password@localhost:5433/database_name"
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
@@ -144,11 +172,11 @@ from pgx for lower-level control.
 
 `pgconn` is a lower-level PostgreSQL database driver that operates at nearly the same level as the C library `libpq`.
 
-### [github.com/jackc/pgx/v4/pgxpool](https://github.com/jackc/pgx/tree/master/pgxpool)
+### [github.com/yugabyte/pgx/v4/pgxpool](https://github.com/yugabyte/pgx/tree/master/pgxpool)
 
 `pgxpool` is a connection pool for pgx. pgx is entirely decoupled from its default pool implementation. This means that pgx can be used with a different pool or without any pool at all.
 
-### [github.com/jackc/pgx/v4/stdlib](https://github.com/jackc/pgx/tree/master/stdlib)
+### [github.com/yugabyte/pgx/v4/stdlib](https://github.com/yugabyte/pgx/tree/master/stdlib)
 
 This is a `database/sql` compatibility layer for pgx. pgx can be used as a normal `database/sql` driver, but at any time, the native interface can be acquired for more performance or PostgreSQL specific functionality.
 

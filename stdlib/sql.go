@@ -2,14 +2,14 @@
 //
 // A database/sql connection can be established through sql.Open.
 //
-//	db, err := sql.Open("pgx", "postgres://pgx_md5:secret@localhost:5432/pgx_test?sslmode=disable")
+//	db, err := sql.Open("pgx", "postgres://pgx_md5:secret@localhost:5433/pgx_test?sslmode=disable")
 //	if err != nil {
 //		return err
 //	}
 //
 // Or from a DSN string.
 //
-//	db, err := sql.Open("pgx", "user=postgres password=secret host=localhost port=5432 database=pgx_test sslmode=disable")
+//	db, err := sql.Open("pgx", "user=postgres password=secret host=localhost port=5433 database=pgx_test sslmode=disable")
 //	if err != nil {
 //		return err
 //	}
@@ -65,7 +65,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/yugabyte/pgx/v4"
 )
 
 // Only intrinsic types should be binary format with database/sql.

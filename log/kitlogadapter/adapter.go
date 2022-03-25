@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-kit/log"
 	kitlevel "github.com/go-kit/log/level"
-	"github.com/jackc/pgx/v4"
+	"github.com/yugabyte/pgx/v4"
 )
 
 type Logger struct {

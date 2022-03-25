@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgconn/stmtcache"
 	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/yugabyte/pgx/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -117,7 +117,7 @@ func TestConfigContainsConnStr(t *testing.T) {
 }
 
 func TestConfigCopyReturnsEqualConfig(t *testing.T) {
-	connString := "postgres://jack:secret@localhost:5432/mydb?application_name=pgxtest&search_path=myschema&connect_timeout=5"
+	connString := "postgres://jack:secret@localhost:5433/mydb?application_name=pgxtest&search_path=myschema&connect_timeout=5"
 	original, err := pgx.ParseConfig(connString)
 	require.NoError(t, err)
 

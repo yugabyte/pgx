@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgconn/stmtcache"
-	"github.com/jackc/pgx/v4"
+	"github.com/yugabyte/pgx/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
