@@ -200,11 +200,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		return connect(ctx, config) // fallback to original behaviour
 	}
 	if lbHost.hostname == config.Host {
-		conn, err := connect(ctx, config)
-		if err != nil {
-			decrementConnCount(config.controlHost + "," + config.Host)
-		}
-		return conn, err
+		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, lbHost)
 	} else {
 		newConnString := replaceHostString(config.connString, lbHost.hostname, lbHost.port)
 		newConfig, err := ParseConfig(newConnString)
@@ -213,37 +209,39 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		}
 		newConfig.Port = lbHost.port
 		newConfig.controlHost = config.controlHost
-		conn, err := connect(ctx, newConfig)
-		for i := 0; i < MAX_RETRIES && err != nil; i++ {
-			decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-			// log.Println(err.Error() + ", retrying ...")
-			newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
-			requestChan <- newLoadInfo
-			lbHost = <-hostChan
-			if lbHost.err != nil {
-				return nil, lbHost.err
-			}
-			if lbHost.hostname == newConfig.Host {
-				conn, err := connect(ctx, newConfig)
-				if err != nil {
-					decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-				}
-				return conn, err
-			}
-			newConnString = strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
+		return connectWithRetries(ctx, config.controlHost, newConfig, newLoadInfo, lbHost)
+	}
+}
+
+func connectWithRetries(ctx context.Context, controlHost string, newConfig *ConnConfig,
+	newLoadInfo *ClusterLoadInfo, lbHost *lbHost) (c *Conn, er error) {
+	conn, err := connect(ctx, newConfig)
+	for i := 0; i < MAX_RETRIES && err != nil; i++ {
+		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
+		// log.Println(err.Error() + ", retrying ...")
+		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
+		requestChan <- newLoadInfo
+		lbHost = <-hostChan
+		if lbHost.err != nil {
+			return nil, lbHost.err
+		}
+		if lbHost.hostname == newConfig.Host {
+			conn, err = connect(ctx, newConfig)
+		} else {
+			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
 			newConfig, err = ParseConfig(newConnString)
 			if err != nil {
 				return nil, err
 			}
 			newConfig.Port = lbHost.port
-			newConfig.controlHost = config.controlHost
+			newConfig.controlHost = controlHost
 			conn, err = connect(ctx, newConfig)
 		}
-		if err != nil {
-			decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-		}
-		return conn, err
 	}
+	if err != nil {
+		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
+	}
+	return conn, err
 }
 
 func decrementConnCount(str string) {
