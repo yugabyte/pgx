@@ -37,7 +37,9 @@ Note that, you would still need to specify `load_balance=true` to enable the top
 
 Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
 
-Details about the upstream pgx driver itself (which hold true for this driver as well) are given below.
+For a working example which demonstrates both the configurations of connection load balancing using `pgx.Connect()` and `pgxpool.Connect()`, see the [driver-examples](https://github.com/yugabyte/driver-examples/tree/main/go/pgx) repository.
+
+Details about the upstream pgx driver - which hold true for this driver as well - are given below.
 
 # pgx - PostgreSQL Driver and Toolkit
 
