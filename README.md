@@ -4,22 +4,32 @@ This is a Go Driver based on [jackc/pgx](https://github.com/jackc/pgx), with fol
 
 ## Connection load balancing
 
-To enable the connection load balancing, provide additional parameter set to true as `load_balance=true` in the connection url or the connection string (DSN style).
+Users can use this feature in two configurations.
+
+### Cluster-aware / Uniform connection load balancing
+
+In the cluster-aware connection load balancing, connections are distributed across all the tservers in the cluster, irrespective of their placements.
+
+To enable the cluster-aware connection load balancing, provide the parameter `load_balance` set to true as `load_balance=true` in the connection url or the connection string (DSN style).
 
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true"
 ```
-With this parameter, the driver will fetch and maintain the list of tservers from the given endpoint (`localhost` in above example) available in the YugabyteDB cluster and distribute the connections equally across them.
+
+With this parameter specified in the url, the driver will fetch and maintain the list of tservers from the given endpoint (`localhost` in above example) available in the YugabyteDB cluster and distribute the connections equally across them.
+
+This list is refreshed every 5 minutes, when a new connection request is received.
 
 Application needs to use the same connection url to create every connection it needs, so that the distribution happens equally.
 
-### Topology aware connection load balancing
+### Topology-aware connection load balancing
 
-Addtionally, users can also target tservers in specific zones by specifying these zones as `topology_keys` with values in the format `cloudname.regionname.zonename`. Multiple zones can be specified as comma separated values.
+With topology-aware connnection load balancing, users can target tservers in specific zones by specifying these zones as `topology_keys` with values in the format `cloudname.regionname.zonename`. Multiple zones can be specified as comma separated values.
 
 The connections will be distributed equally with the tservers in these zones.
+If there are no servers available in these zones, `pgx.Connect()` may return with a failure.
 
-Note that, you would need to specify `load_balance=true` even for the topology aware connection load balancing.
+Note that, you would still need to specify `load_balance=true` to enable the topology-aware connection load balancing.
 
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
