@@ -209,6 +209,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		}
 		newConfig.Port = lbHost.port
 		newConfig.controlHost = config.controlHost
+		newConfig.TLSConfig = config.TLSConfig
 		return connectWithRetries(ctx, config.controlHost, newConfig, newLoadInfo, lbHost)
 	}
 }
@@ -229,12 +230,14 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 			conn, err = connect(ctx, newConfig)
 		} else {
 			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
+			oldTLSConfig := newConfig.TLSConfig
 			newConfig, err = ParseConfig(newConnString)
 			if err != nil {
 				return nil, err
 			}
 			newConfig.Port = lbHost.port
 			newConfig.controlHost = controlHost
+			newConfig.TLSConfig = oldTLSConfig
 			conn, err = connect(ctx, newConfig)
 		}
 	}
