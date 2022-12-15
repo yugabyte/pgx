@@ -15,6 +15,8 @@ import (
 const NO_SERVERS_MSG = "could not find a server to connect to"
 const MAX_RETRIES = 20
 const REFRESH_INTERVAL_SECONDS = 300
+const MAX_INTERVAL_SECONDS = 600
+const MAX_PREFERENCE_VALUE = 10
 
 // -- Values for ClusterLoadInfo.flags --
 // Use private address (host) of tservers to create a connection
@@ -322,12 +324,19 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		} else {
 			li.hostPairs[host] = publicIP
 			tk := cloud + "." + region + "." + zone
+			tk_star := cloud + "." + region // Used for topology_keys of type: cloud.region.*
 			hosts, ok := li.zoneList[tk]
 			if !ok {
 				hosts = make([]string, 0)
 			}
+			hosts_star, ok_star := li.zoneList[tk_star]
+			if !ok_star {
+				hosts_star = make([]string, 0)
+			}
 			hosts = append(hosts, host)
+			hosts_star = append(hosts_star, host)
 			li.zoneList[tk] = hosts
+			li.zoneList[tk_star] = hosts_star
 			cnt := li.hostLoad[host]
 			newHostLoad[host] = cnt
 			li.hostPort[host] = uint16(port)
@@ -348,14 +357,26 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	leastCnt := int(math.MaxInt64)
 	leastLoaded := ""
 	if li.config.topologyKeys != nil {
-		for _, tk := range li.config.topologyKeys {
-			for _, h := range li.zoneList[tk] {
+		for i := 0; i < len(li.config.topologyKeys); i++ {
+			var servers []string
+			for _, tk := range li.config.topologyKeys[i] {
+				toCheckStar := strings.Split(tk, ".")
+				if toCheckStar[2] == "*" {
+					tk = toCheckStar[0] + "." + toCheckStar[1]
+				}
+				servers = append(servers, li.zoneList[tk]...)
+			}
+			for _, h := range servers {
 				if !isHostAway(li, h) && li.hostLoad[h] < leastCnt {
 					leastLoaded, leastCnt = h, li.hostLoad[h]
 				}
 			}
+			if leastCnt != int(math.MaxInt64) && leastLoaded != "" {
+				break
+			}
 		}
-	} else {
+	}
+	if leastCnt == int(math.MaxInt64) && leastLoaded == "" {
 		for h := range li.hostLoad {
 			if !isHostAway(li, h) && li.hostLoad[h] < leastCnt {
 				leastLoaded, leastCnt = h, li.hostLoad[h]
@@ -427,8 +448,9 @@ func refreshAndGetLeastLoadedHost(li *ClusterLoadInfo, awayHosts map[string]int6
 func validateTopologyKeys(s string) ([]string, error) {
 	tkeys := strings.Split(s, ",")
 	for _, tk := range tkeys {
-		zones := strings.Split(tk, ".")
-		if len(zones) != 3 {
+		zones1 := strings.Split(tk, ".")
+		zones2 := strings.Split(tk, ":")
+		if len(zones1) != 3 || len(zones2) > 2 {
 			return nil, errors.New("toplogy_keys '" + s +
 				"' not in correct format, should be specified as '<cloud>.<region>.<zone>,...'")
 		}
@@ -454,9 +476,12 @@ func GetAZInfo() map[string]map[string][]string {
 	for n, cli := range clustersLoadInfo {
 		az[n] = make(map[string][]string)
 		for z, hosts := range cli.zoneList {
-			newzl := make([]string, len(hosts))
-			copy(newzl, hosts)
-			az[n][z] = newzl
+			q := strings.Split(z, ".")
+			if len(q) == 3 {
+				newzl := make([]string, len(hosts))
+				copy(newzl, hosts)
+				az[n][z] = newzl
+			}
 		}
 	}
 	return az
