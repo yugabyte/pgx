@@ -34,7 +34,7 @@ Note that, you would still need to specify `load_balance=true` to enable the top
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
 ```
-## Specifying fallback zones
+### Specifying fallback zones
 
 For topology-aware load balancing, you can now specify fallback placements too. This is not applicable for cluster-aware load balancing.
 Each placement value can be suffixed with a colon (`:`) followed by a preference value between 1 and 10.
@@ -42,7 +42,6 @@ A preference value of `:1` means it is a primary placement. A preference value o
 
 ```
 String yburl = "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1:1,cloud1.region1.zone2:2";
-
 ```
 
 You can also use `*` for specifying all the zones in a given region as shown below. This is not allowed for cloud or region values.
