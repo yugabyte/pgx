@@ -360,9 +360,9 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		for i := 0; i < len(li.config.topologyKeys); i++ {
 			var servers []string
 			for _, tk := range li.config.topologyKeys[i] {
-				ToCheckStar := strings.Split(tk, ".")
-				if ToCheckStar[2] == "*" {
-					tk = ToCheckStar[0] + "." + ToCheckStar[1]
+				toCheckStar := strings.Split(tk, ".")
+				if toCheckStar[2] == "*" {
+					tk = toCheckStar[0] + "." + toCheckStar[1]
 				}
 				servers = append(servers, li.zoneList[tk]...)
 			}
