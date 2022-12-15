@@ -213,15 +213,15 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 					topologyKeys[0] = append(topologyKeys[0], zones[0])
 				} else {
 					num, err := strconv.Atoi(zones[1])
-					if err != nil {
-						return nil, fmt.Errorf("Invalid preference value for ", zones[0], ": ", num)
-					}
-					if num < 1 || num > MAX_PREFERENCE_VALUE {
-						return nil, fmt.Errorf("Invalid preference value for ", zones[0], ": ", num)
+					if err != nil || num < 1 || num > MAX_PREFERENCE_VALUE {
+						str := "Invalid preference value for " + zones[0] + ": " + zones[1]
+						return nil, fmt.Errorf(str)
 					}
 					topologyKeys[num-1] = append(topologyKeys[num-1], zones[0])
 				}
 			}
+		} else {
+			return nil, err
 		}
 	}
 
