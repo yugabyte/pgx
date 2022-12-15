@@ -34,6 +34,36 @@ Note that, you would still need to specify `load_balance=true` to enable the top
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
 ```
+## Specifying fallback zones
+
+For topology-aware load balancing, you can now specify fallback placements too. This is not applicable for cluster-aware load balancing.
+Each placement value can be suffixed with a colon (`:`) followed by a preference value between 1 and 10.
+A preference value of `:1` means it is a primary placement. A preference value of `:2` means it is the first fallback placement and so on.If no preference value is provided, it is considered to be a primary placement (equivalent to one with preference value `:1`). Example given below.
+
+```
+String yburl = "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1:1,cloud1.region1.zone2:2";
+
+```
+
+You can also use `*` for specifying all the zones in a given region as shown below. This is not allowed for cloud or region values.
+
+```
+String yburl = "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
+```
+
+The driver attempts connection to servers in the first fallback placement(s) if it does not find any servers available in the primary placement(s). If no servers are available in the first fallback placement(s),
+then it attempts to connect to servers in the second fallback placement(s), if specified. This continues until the driver finds a server to connect to, else an error is returned to the application.
+And this repeats for each connection request.
+
+## Specifying Refresh Interval
+
+Users can specify Refresh Time Interval, in seconds. It is the time interval between two attempts to refresh the information about cluster nodes. Default is 300. Valid values are integers between 0 and 600. Value 0 means refresh for each connection request. Any value outside this range is ignored and the default is used.
+
+To specify Refresh Interval, use the parameter `yb_servers_refresh_interval` in the connection url or the connection string.
+
+```
+String yburl = "postgres://username:password@localhost:5433/database_name?yb_servers_refresh_interval=X&load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
+```
 
 Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
 

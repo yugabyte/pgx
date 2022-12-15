@@ -448,8 +448,9 @@ func refreshAndGetLeastLoadedHost(li *ClusterLoadInfo, awayHosts map[string]int6
 func validateTopologyKeys(s string) ([]string, error) {
 	tkeys := strings.Split(s, ",")
 	for _, tk := range tkeys {
-		zones := strings.Split(tk, ".")
-		if len(zones) != 3 {
+		zones1 := strings.Split(tk, ".")
+		zones2 := strings.Split(tk, ":")
+		if len(zones1) != 3 || len(zones2) > 2 {
 			return nil, errors.New("toplogy_keys '" + s +
 				"' not in correct format, should be specified as '<cloud>.<region>.<zone>,...'")
 		}

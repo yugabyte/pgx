@@ -214,10 +214,10 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 				} else {
 					num, err := strconv.Atoi(zones[1])
 					if err != nil {
-						return nil, fmt.Errorf("invalid PREFERENCE_VALUE")
+						return nil, fmt.Errorf("Invalid preference value for ", zones[0], ": ", num)
 					}
 					if num < 1 || num > MAX_PREFERENCE_VALUE {
-						return nil, fmt.Errorf("Invalid preference value for property ", zones[0], " : ", num)
+						return nil, fmt.Errorf("Invalid preference value for ", zones[0], ": ", num)
 					}
 					topologyKeys[num-1] = append(topologyKeys[num-1], zones[0])
 				}
@@ -226,8 +226,8 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 	}
 
 	refreshInterval := int64(REFRESH_INTERVAL_SECONDS)
-	if s, ok := config.RuntimeParams["refresh_interval"]; ok {
-		delete(config.RuntimeParams, "refresh_interval")
+	if s, ok := config.RuntimeParams["yb_servers_refresh_interval"]; ok {
+		delete(config.RuntimeParams, "yb_servers_refresh_interval")
 		if refresh, err := strconv.Atoi(s); err == nil {
 			if refresh >= 0 && refresh <= MAX_INTERVAL_SECONDS {
 				refreshInterval = int64(refresh)
