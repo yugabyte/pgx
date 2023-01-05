@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net"
 	"regexp"
 	"strings"
@@ -356,6 +357,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	leastCnt := int(math.MaxInt64)
 	leastLoaded := ""
+	leastLoadedservers := make([]string, 0)
 	if li.config.topologyKeys != nil {
 		for i := 0; i < len(li.config.topologyKeys); i++ {
 			var servers []string
@@ -367,22 +369,40 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				servers = append(servers, li.zoneList[tk]...)
 			}
 			for _, h := range servers {
-				if !isHostAway(li, h) && li.hostLoad[h] < leastCnt {
-					leastLoaded, leastCnt = h, li.hostLoad[h]
+				if !isHostAway(li, h) {
+					if li.hostLoad[h] < leastCnt {
+						leastLoadedservers = nil
+						leastLoadedservers = append(leastLoadedservers, h)
+						leastCnt = li.hostLoad[h]
+					} else if li.hostLoad[h] == leastCnt {
+						leastLoadedservers = append(leastLoadedservers, h)
+					}
 				}
 			}
-			if leastCnt != int(math.MaxInt64) && leastLoaded != "" {
+			if leastCnt != int(math.MaxInt64) && len(leastLoadedservers) != 0 {
 				break
 			}
 		}
 	}
-	if leastCnt == int(math.MaxInt64) && leastLoaded == "" {
+	if leastCnt == int(math.MaxInt64) && len(leastLoadedservers) == 0 {
 		for h := range li.hostLoad {
-			if !isHostAway(li, h) && li.hostLoad[h] < leastCnt {
-				leastLoaded, leastCnt = h, li.hostLoad[h]
+			if !isHostAway(li, h) {
+				if li.hostLoad[h] < leastCnt {
+					leastLoadedservers = nil
+					leastLoadedservers = append(leastLoadedservers, h)
+					leastCnt = li.hostLoad[h]
+				} else if li.hostLoad[h] == leastCnt {
+					leastLoadedservers = append(leastLoadedservers, h)
+				}
 			}
 		}
 	}
+
+	if len(leastLoadedservers) != 0 {
+		rand.Seed(time.Now().UnixNano())
+		leastLoaded = leastLoadedservers[rand.Intn(len(leastLoadedservers))]
+	}
+
 	if leastLoaded == "" {
 		if li.flags == TRY_HOSTS_PUBLIC_IP {
 			// remove all host (private ips) from unavailable list
