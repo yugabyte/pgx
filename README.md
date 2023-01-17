@@ -27,7 +27,6 @@ Application needs to use the same connection url to create every connection it n
 With topology-aware connnection load balancing, users can target tservers in specific zones by specifying these zones as `topology_keys` with values in the format `cloudname.regionname.zonename`. Multiple zones can be specified as comma separated values.
 
 The connections will be distributed equally with the tservers in these zones.
-If there are no servers available in these zones, `pgx.Connect()` may return with a failure.
 
 Note that, you would still need to specify `load_balance=true` to enable the topology-aware connection load balancing.
 
@@ -41,17 +40,17 @@ Each placement value can be suffixed with a colon (`:`) followed by a preference
 A preference value of `:1` means it is a primary placement. A preference value of `:2` means it is the first fallback placement and so on.If no preference value is provided, it is considered to be a primary placement (equivalent to one with preference value `:1`). Example given below.
 
 ```
-String yburl = "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1:1,cloud1.region1.zone2:2";
+"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1:1,cloud1.region1.zone2:2";
 ```
 
 You can also use `*` for specifying all the zones in a given region as shown below. This is not allowed for cloud or region values.
 
 ```
-String yburl = "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
+"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
 ```
 
-The driver attempts connection to servers in the first fallback placement(s) if it does not find any servers available in the primary placement(s). If no servers are available in the first fallback placement(s),
-then it attempts to connect to servers in the second fallback placement(s), if specified. This continues until the driver finds a server to connect to, else an error is returned to the application.
+The driver attempts to connect to a node in following order: the least loaded node in the 1) primary placement(s), else in the 2) first fallback if specified, else in the 3) second fallback if specified and so on.
+If no nodes are available either in primary placement(s) or in any of the fallback placements, then nodes in the rest of the cluster are attempted.
 And this repeats for each connection request.
 
 ## Specifying Refresh Interval
@@ -61,7 +60,7 @@ Users can specify Refresh Time Interval, in seconds. It is the time interval bet
 To specify Refresh Interval, use the parameter `yb_servers_refresh_interval` in the connection url or the connection string.
 
 ```
-String yburl = "postgres://username:password@localhost:5433/database_name?yb_servers_refresh_interval=X&load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
+"postgres://username:password@localhost:5433/database_name?yb_servers_refresh_interval=X&load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
 ```
 
 Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
