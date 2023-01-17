@@ -49,7 +49,8 @@ You can also use `*` for specifying all the zones in a given region as shown bel
 "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
 ```
 
-The driver attempts connection to servers in the first fallback placement(s) if it does not find any servers available in the primary placement(s), then it attempts to connect to servers in the second fallback placement(s), if specified and so on. At last if no servers specified in topologyKeys are available, then it will attempt to connect to any server in the cluster (load balancing will still be followed for the entire cluster).
+The driver attempts to connect to a node in following order: the least loaded node in the 1) primary placement(s), else in the 2) first fallback if specified, else in the 3) second fallback if specified and so on.
+If no nodes are available either in primary placement(s) or in any of the fallback placements, then nodes in the rest of the cluster are attempted.
 And this repeats for each connection request.
 
 ## Specifying Refresh Interval
