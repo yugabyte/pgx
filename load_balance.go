@@ -65,7 +65,7 @@ type lbHost struct {
 
 var clustersLoadInfo map[string]*ClusterLoadInfo
 
-const LB_QUERY = "SELECT * FROM yb_servers()"
+const LB_QUERY = "SELECT host,port,num_connections,node_type,cloud,region,zone,public_ip FROM yb_servers()"
 
 // Only the Go routine spawned in init() reads this channel. Based on the flag, it
 // - returns the least loaded tserver's host/port (GET_LB_CONN)
