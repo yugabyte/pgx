@@ -43,6 +43,7 @@ type ClusterLoadInfo struct {
 	ctx         context.Context
 	config      *ConnConfig
 	controlConn *Conn
+	ctrlCtx     context.Context
 	lastRefresh time.Time
 	// map of host -> connection count
 	hostLoad map[string]int
@@ -258,6 +259,7 @@ func decrementConnCount(str string) {
 }
 
 func markHostAway(li *ClusterLoadInfo, h string) {
+	log.Printf("Marking host %s as unreachable", h)
 	delete(li.hostLoad, h)
 	delete(li.hostPairs, h)
 	if li.unavailableHosts == nil {
@@ -269,7 +271,8 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 func refreshLoadInfo(li *ClusterLoadInfo) error {
 	if li.controlConn == nil || li.controlConn.IsClosed() {
 		var err error
-		li.controlConn, err = connect(li.ctx, li.config)
+		li.ctrlCtx = context.Background()
+		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
 			log.Printf("Could not create control connection to %s\n", li.config.Host)
 			// remove its hostLoad entry
@@ -277,14 +280,17 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			li.controlConn = nil
 			// Attempt connection to other servers which are already fetched in cli.
 			if len(li.hostPairs) > 0 {
-				log.Println("Attempting control connection to other servers ...")
+				log.Printf("Attempting control connection to %d other servers ...\n", len(li.hostPairs))
 			}
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
 				if li.config, err = ParseConfig(newConnString); err == nil {
-					if li.controlConn, err = connect(li.ctx, li.config); err == nil {
+					li.ctrlCtx = context.Background()
+					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
+						log.Printf("Created control connection to host %s", h)
 						break
 					}
+					log.Printf("Could not create control connection to host %s", h)
 					markHostAway(li, li.config.Host)
 					li.controlConn = nil
 				}
@@ -295,10 +301,10 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			}
 		}
 	}
-	// defer li.controlConn.Close(li.ctx)
+	// defer li.controlConn.Close(li.ctrlCtx)
 
-	li.controlConn.stmtcache.Clear(li.ctx)
-	rows, err := li.controlConn.Query(li.ctx, LB_QUERY)
+	li.controlConn.stmtcache.Clear(li.ctrlCtx)
+	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
 	if err != nil {
 		log.Printf("Could not query load information: %s", err.Error())
 		markHostAway(li, li.config.Host)
