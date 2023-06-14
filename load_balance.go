@@ -190,6 +190,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			// continue
 		} else {
 			old.config.topologyKeys = new.config.topologyKeys // Use the provided topology-keys.
+			old.config.connString = new.config.connString
 			out <- refreshAndGetLeastLoadedHost(old, new.unavailableHosts)
 			// continue
 		}
@@ -354,6 +355,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	for uh, t := range li.unavailableHosts {
 		if time.Now().Unix()-t > 30 {
 			// clear the unavailable-hosts list
+			li.hostLoad[uh] = 0
 			delete(li.unavailableHosts, uh)
 		}
 	}
@@ -511,4 +513,14 @@ func GetAZInfo() map[string]map[string][]string {
 		}
 	}
 	return az
+}
+
+// For test purpose
+func EmptyHostLoad() map[string]map[string]int {
+	for cluster := range clustersLoadInfo {
+		for host := range clustersLoadInfo[cluster].hostLoad {
+			delete(clustersLoadInfo[cluster].hostLoad, host)
+		}
+	}
+	return nil
 }
