@@ -40,9 +40,11 @@ type ConnConfig struct {
 
 	createdByParseConfig bool // Used to enforce created by ParseConfig rule.
 
-	loadBalance     bool
-	topologyKeys    map[int][]string
-	refreshInterval int64
+	loadBalance                  bool
+	topologyKeys                 map[int][]string
+	refreshInterval              int64
+	fallbackToTopologyKeysOnly   bool
+	failedHostReconnectDelaySecs int64
 }
 
 // Copy returns a deep copy of the config that is safe to use and modify.
@@ -112,7 +114,13 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 		return nil, err
 	}
 	if connConfig.loadBalance {
-		return connectLoadBalanced(ctx, connConfig)
+		conn, err := connectLoadBalanced(ctx, connConfig)
+		var e error = ErrFallbackToOriginalBehviour
+		if err != e {
+			return conn, err
+		} else {
+			return connect(ctx, connConfig)
+		}
 	} else {
 		return connect(ctx, connConfig)
 	}
@@ -237,17 +245,41 @@ func ParseConfig(connString string) (*ConnConfig, error) {
 		}
 	}
 
+	fallbackToTopologyKeysOnly := false
+	if s, ok := config.RuntimeParams["fallback_to_topology_keys_only"]; ok {
+		delete(config.RuntimeParams, "fallback_to_topology_keys_only")
+		if b, err := strconv.ParseBool(s); err == nil {
+			fallbackToTopologyKeysOnly = b
+		} else {
+			return nil, fmt.Errorf("invalid fallback_to_topology_keys_only: %v", err)
+		}
+	}
+
+	failedHostReconnectDelaySecs := int64(DEFAULT_FAILED_HOST_RECONNECT_DELAY_SECS)
+	if s, ok := config.RuntimeParams["failed_host_reconnect_delay_secs"]; ok {
+		delete(config.RuntimeParams, "failed_host_reconnect_delay_secs")
+		if reconnect, err := strconv.Atoi(s); err == nil {
+			if reconnect >= 0 && reconnect <= MAX_FAILED_HOST_RECONNECT_DELAY_SECS {
+				failedHostReconnectDelaySecs = int64(reconnect)
+			}
+		} else {
+			return nil, fmt.Errorf("invalid failed_host_reconnect_delay_secs: %v", err)
+		}
+	}
+
 	connConfig := &ConnConfig{
-		Config:               *config,
-		createdByParseConfig: true,
-		LogLevel:             LogLevelInfo,
-		BuildStatementCache:  buildStatementCache,
-		PreferSimpleProtocol: preferSimpleProtocol,
-		connString:           connString,
-		controlHost:          config.Host,
-		loadBalance:          loadBalance,
-		topologyKeys:         topologyKeys,
-		refreshInterval:      refreshInterval,
+		Config:                       *config,
+		createdByParseConfig:         true,
+		LogLevel:                     LogLevelInfo,
+		BuildStatementCache:          buildStatementCache,
+		PreferSimpleProtocol:         preferSimpleProtocol,
+		connString:                   connString,
+		controlHost:                  config.Host,
+		loadBalance:                  loadBalance,
+		topologyKeys:                 topologyKeys,
+		refreshInterval:              refreshInterval,
+		fallbackToTopologyKeysOnly:   fallbackToTopologyKeysOnly,
+		failedHostReconnectDelaySecs: failedHostReconnectDelaySecs,
 	}
 
 	return connConfig, nil
