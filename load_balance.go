@@ -16,8 +16,12 @@ import (
 const NO_SERVERS_MSG = "could not find a server to connect to"
 const MAX_RETRIES = 20
 const REFRESH_INTERVAL_SECONDS = 300
+const DEFAULT_FAILED_HOST_RECONNECT_DELAY_SECS = 5
+const MAX_FAILED_HOST_RECONNECT_DELAY_SECS = 60
 const MAX_INTERVAL_SECONDS = 600
 const MAX_PREFERENCE_VALUE = 10
+
+var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
 
 // -- Values for ClusterLoadInfo.flags --
 // Use private address (host) of tservers to create a connection
@@ -190,6 +194,8 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			// continue
 		} else {
 			old.config.topologyKeys = new.config.topologyKeys // Use the provided topology-keys.
+			old.config.fallbackToTopologyKeysOnly = new.config.fallbackToTopologyKeysOnly
+			old.config.failedHostReconnectDelaySecs = new.config.failedHostReconnectDelaySecs
 			old.config.connString = new.config.connString
 			out <- refreshAndGetLeastLoadedHost(old, new.unavailableHosts)
 			// continue
@@ -353,7 +359,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
 	for uh, t := range li.unavailableHosts {
-		if time.Now().Unix()-t > 30 {
+		if time.Now().Unix()-t > li.config.failedHostReconnectDelaySecs {
 			// clear the unavailable-hosts list
 			li.hostLoad[uh] = 0
 			delete(li.unavailableHosts, uh)
@@ -393,16 +399,23 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		}
 	}
 	if leastCnt == int(math.MaxInt64) && len(leastLoadedservers) == 0 {
-		for h := range li.hostLoad {
-			if !isHostAway(li, h) {
-				if li.hostLoad[h] < leastCnt {
-					leastLoadedservers = nil
-					leastLoadedservers = append(leastLoadedservers, h)
-					leastCnt = li.hostLoad[h]
-				} else if li.hostLoad[h] == leastCnt {
-					leastLoadedservers = append(leastLoadedservers, h)
+		if li.config.topologyKeys == nil || !li.config.fallbackToTopologyKeysOnly {
+			for h := range li.hostLoad {
+				if !isHostAway(li, h) {
+					if li.hostLoad[h] < leastCnt {
+						leastLoadedservers = nil
+						leastLoadedservers = append(leastLoadedservers, h)
+						leastCnt = li.hostLoad[h]
+					} else if li.hostLoad[h] == leastCnt {
+						leastLoadedservers = append(leastLoadedservers, h)
+					}
 				}
 			}
+		} else {
+			lbh := &lbHost{
+				err: ErrFallbackToOriginalBehaviour,
+			}
+			return lbh
 		}
 	}
 
