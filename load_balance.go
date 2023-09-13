@@ -21,7 +21,7 @@ const MAX_FAILED_HOST_RECONNECT_DELAY_SECS = 60
 const MAX_INTERVAL_SECONDS = 600
 const MAX_PREFERENCE_VALUE = 10
 
-var ErrFallbackToOriginalBehviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
+var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
 
 // -- Values for ClusterLoadInfo.flags --
 // Use private address (host) of tservers to create a connection
@@ -413,7 +413,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			}
 		} else {
 			lbh := &lbHost{
-				err: ErrFallbackToOriginalBehviour,
+				err: ErrFallbackToOriginalBehaviour,
 			}
 			return lbh
 		}

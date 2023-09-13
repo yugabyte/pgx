@@ -115,8 +115,7 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 	}
 	if connConfig.loadBalance {
 		conn, err := connectLoadBalanced(ctx, connConfig)
-		var e error = ErrFallbackToOriginalBehviour
-		if err != e {
+		if err != ErrFallbackToOriginalBehaviour {
 			return conn, err
 		} else {
 			return connect(ctx, connConfig)
