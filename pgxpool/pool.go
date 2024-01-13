@@ -434,8 +434,9 @@ func (p *Pool) Acquire(ctx context.Context) (*Conn, error) {
 
 		cr := res.Value().(*connResource)
 		if p.beforeAcquire == nil || p.beforeAcquire(ctx, cr.conn) {
-			log.Printf("pool.go:Acquire(): A connection is acquired from pool")
-			return cr.getConn(p, res), nil
+			conn := cr.getConn(p, res)
+			log.Printf("pool.go:Acquire(): A connection to %s is acquired from pool", conn.connResource().conn.Config().Host)
+			return conn, nil
 		}
 
 		res.Destroy()

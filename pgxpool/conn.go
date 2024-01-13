@@ -19,7 +19,7 @@ type Conn struct {
 // Release returns c to the pool it was acquired from. Once Release has been called, other methods must not be called.
 // However, it is safe to call Release multiple times. Subsequent calls after the first will be ignored.
 func (c *Conn) Release() {
-	log.Printf("conn.go:Release(): releasing a connection to the pool")
+	log.Printf("conn.go:Release(): releasing a connection to %s back to the pool", c.Conn().Config().Host)
 	if c.res == nil {
 		return
 	}
