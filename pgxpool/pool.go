@@ -3,6 +3,7 @@ package pgxpool
 import (
 	"context"
 	"fmt"
+	"log"
 	"runtime"
 	"strconv"
 	"sync"
@@ -162,6 +163,13 @@ func ConnectConfig(ctx context.Context, config *Config) (*Pool, error) {
 	if !config.createdByParseConfig {
 		panic("config must be created by ParseConfig")
 	}
+
+	log.Printf("pool.go:ConnectConfig(): Creting a new pool with following config")
+	log.Printf("minConns %d", config.MinConns)
+	log.Printf("maxConnLifetime %s", config.MaxConnLifetime)
+	log.Printf("maxConnIdleTime %s", config.MaxConnIdleTime)
+	log.Printf("healthCheckPeriod %s", config.HealthCheckPeriod)
+	log.Printf("maxConns %d", config.MaxConns)
 
 	p := &Pool{
 		config:            config,
@@ -337,6 +345,7 @@ func ParseConfig(connString string) (*Config, error) {
 // Close closes all connections in the pool and rejects future Acquire calls. Blocks until all connections are returned
 // to pool and closed.
 func (p *Pool) Close() {
+	log.Printf("pool.go:Close(): Closing the pool")
 	p.closeOnce.Do(func() {
 		close(p.closeChan)
 		p.p.Close()
@@ -344,12 +353,14 @@ func (p *Pool) Close() {
 }
 
 func (p *Pool) backgroundHealthCheck() {
+	log.Printf("pool.go:backgroundHealthCheck(): Starting healthcheck timer")
 	ticker := time.NewTicker(p.healthCheckPeriod)
 
 	for {
 		select {
 		case <-p.closeChan:
 			ticker.Stop()
+			log.Printf("pool.go:backgroundHealthCheck(): Stoping healthcheck")
 			return
 		case <-ticker.C:
 			p.checkIdleConnsHealth()
@@ -359,13 +370,16 @@ func (p *Pool) backgroundHealthCheck() {
 }
 
 func (p *Pool) checkIdleConnsHealth() {
+	log.Printf("pool.go:checkIdleConnsHealth()")
 	resources := p.p.AcquireAllIdle()
 
 	now := time.Now()
 	for _, res := range resources {
 		if now.Sub(res.CreationTime()) > p.maxConnLifetime {
+			log.Printf("pool.go:checkIdleConnsHealth(): maxConnLifetime over for %v, destroying this connection", res)
 			res.Destroy()
 		} else if res.IdleDuration() > p.maxConnIdleTime {
+			log.Printf("pool.go:checkIdleConnsHealth(): maxConnIdletime over for %v, destroying this connection", res)
 			res.Destroy()
 		} else {
 			res.ReleaseUnused()
@@ -374,10 +388,12 @@ func (p *Pool) checkIdleConnsHealth() {
 }
 
 func (p *Pool) checkMinConns() {
+	log.Printf("pool.go:checkMinConns()")
 	for i := p.minConns - p.Stat().TotalConns(); i > 0; i-- {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
+			log.Printf("pool.go:checkMinConns(): Creating a new connection and adding to pool")
 			p.p.CreateResource(ctx)
 		}()
 	}
@@ -418,6 +434,7 @@ func (p *Pool) Acquire(ctx context.Context) (*Conn, error) {
 
 		cr := res.Value().(*connResource)
 		if p.beforeAcquire == nil || p.beforeAcquire(ctx, cr.conn) {
+			log.Printf("pool.go:Acquire(): A connection is acquired from pool")
 			return cr.getConn(p, res), nil
 		}
 
