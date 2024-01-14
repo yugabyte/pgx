@@ -29,6 +29,7 @@ func (c *Conn) Release() {
 	c.res = nil
 
 	now := time.Now()
+	log.Printf("conn.go:Release(): conn.IsClosed %s, IsBusy %s, txStatus %s", conn.IsClosed(), conn.PgConn().IsBusy(), conn.PgConn().TxStatus())
 	if conn.IsClosed() || conn.PgConn().IsBusy() || conn.PgConn().TxStatus() != 'I' || (now.Sub(res.CreationTime()) > c.p.maxConnLifetime) {
 		res.Destroy()
 		return

@@ -241,7 +241,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		if lbHost.err != nil {
 			return nil, lbHost.err
 		}
-		log.Printf("connectWithRetries(): Attenpting connecting to %s", lbHost.hostname)
+		log.Printf("connectWithRetries(): Attempting connection to %s", lbHost.hostname)
 		if lbHost.hostname == newConfig.Host {
 			conn, err = connect(ctx, newConfig)
 		} else {
@@ -282,10 +282,19 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 }
 
 func refreshLoadInfo(li *ClusterLoadInfo) error {
+	log.Printf("refreshLoadInfo(): begin")
+	li.ctrlCtx, _ = context.WithTimeout(context.Background(), 20*time.Second)
 	if li.controlConn == nil || li.controlConn.IsClosed() {
 		log.Printf("refreshLoadInfo(): Creating Control Connection")
 		var err error
-		li.ctrlCtx = context.Background()
+		ctrlConfig, err := ParseConfig(li.config.connString)
+		if err != nil {
+			log.Printf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
+			return err
+		}
+		li.config = ctrlConfig
+		// Set ConnectTimeout to 15s
+		li.config.ConnectTimeout = 15 * time.Second
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
 			log.Printf("refreshLoadInfo(): Could not create control connection to %s\n", li.config.Host)
@@ -317,7 +326,8 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	}
 	// defer li.controlConn.Close(li.ctrlCtx)
 
-	li.controlConn.stmtcache.Clear(li.ctrlCtx)
+	log.Println("refreshLoadInfo(): Have a control connection, now calling Query()")
+	li.controlConn.stmtcache.Clear(li.ctrlCtx) // todo check if it is NA
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
 	if err != nil {
 		log.Printf("refreshLoadInfo(): Could not query load information: %s", err.Error())
@@ -363,6 +373,15 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			li.hostPort[host] = uint16(port)
 		}
 	}
+
+	rsError := rows.Err()
+	if rsError != nil {
+		log.Printf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
+		markHostAway(li, li.config.Host)
+		li.controlConn = nil
+		return refreshLoadInfo(li)
+	}
+
 	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
 	for uh, t := range li.unavailableHosts {
