@@ -234,7 +234,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-		log.Printf("connectWithRetries(): adding %s to unavailable host", lbHost.hostname)
+		log.Printf("connectWithRetries(): adding %s to unavailable host due to %s", lbHost.hostname, err.Error())
 		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
 		requestChan <- newLoadInfo
 		lbHost = <-hostChan
@@ -243,7 +243,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		}
 		log.Printf("connectWithRetries(): Attempting connection to %s", lbHost.hostname)
 		if lbHost.hostname == newConfig.Host {
-			conn, err = connect(ctx, newConfig)
+			conn, err = connect(context.Background(), newConfig)
 		} else {
 			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
 			oldTLSConfig := newConfig.TLSConfig
@@ -254,7 +254,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 			newConfig.Port = lbHost.port
 			newConfig.controlHost = controlHost
 			newConfig.TLSConfig = oldTLSConfig
-			conn, err = connect(ctx, newConfig)
+			conn, err = connect(context.Background(), newConfig)
 		}
 	}
 	if err != nil {
@@ -297,7 +297,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		li.config.ConnectTimeout = 15 * time.Second
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
-			log.Printf("refreshLoadInfo(): Could not create control connection to %s\n", li.config.Host)
+			log.Printf("refreshLoadInfo(): Could not create control connection to %s, due to %s\n", li.config.Host, err.Error())
 			// remove its hostLoad entry
 			markHostAway(li, li.config.Host)
 			li.controlConn = nil
@@ -313,7 +313,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 						log.Printf("refreshLoadInfo(): Created control connection to host %s", h)
 						break
 					}
-					log.Printf("refreshLoadInfo(): Could not create control connection to host %s", h)
+					log.Printf("refreshLoadInfo(): Could not create control connection to host %s, due to %s", h, err.Error())
 					markHostAway(li, li.config.Host)
 					li.controlConn = nil
 				}
@@ -455,6 +455,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	if leastLoaded == "" {
 		if li.flags == TRY_HOSTS_PUBLIC_IP {
 			// remove all host (private ips) from unavailable list
+			log.Println("getHostWithLeastConns(): Removing all host (private ips) from unavailable list")
 			for h := range li.hostPairs {
 				delete(li.unavailableHosts, h)
 			}
@@ -465,7 +466,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			hostname: "",
 			err:      errors.New(NO_SERVERS_MSG),
 		}
-		log.Printf("getHostWithLeastConns(): Returning host with NO_SERVERS_MSG")
+		log.Printf("getHostWithLeastConns(): Returning host with NO_SERVERS_MSG 1")
 		return lbh
 	}
 	leastLoadedToUse := leastLoaded
@@ -476,7 +477,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				hostname: "",
 				err:      errors.New(NO_SERVERS_MSG),
 			}
-			log.Printf("getHostWithLeastConns(): Returning host with NO_SERVERS_MSG")
+			log.Printf("getHostWithLeastConns(): Returning host with NO_SERVERS_MSG 2")
 			return lbh
 		}
 	}
