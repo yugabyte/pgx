@@ -208,6 +208,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	requestChan <- newLoadInfo
 	lbHost := <-hostChan
 	if lbHost.err != nil {
+		log.Printf("Could not load balance connections, falling back to upstream behaviour, %s", lbHost.err)
 		return connect(ctx, config) // fallback to original behaviour
 	}
 	if lbHost.hostname == config.Host {
@@ -230,7 +231,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-		// log.Println(err.Error() + ", retrying ...")
+		log.Printf("adding %s to unavailableHosts due to %s", newConfig.Host, err.Error())
 		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
 		requestChan <- newLoadInfo
 		lbHost = <-hostChan
@@ -396,6 +397,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				if toCheckStar[2] == "*" {
 					tk = toCheckStar[0] + "." + toCheckStar[1]
 				}
+				log.Printf("Including all nodes for tk %s", tk)
 				servers = append(servers, li.zoneList[tk]...)
 			}
 			for _, h := range servers {
@@ -411,6 +413,8 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			}
 			if leastCnt != int(math.MaxInt64) && len(leastLoadedservers) != 0 {
 				break
+			} else {
+				log.Printf("Did not find any UP nodes in %s", li.config.topologyKeys[i])
 			}
 		}
 	}
