@@ -238,7 +238,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 			return nil, lbHost.err
 		}
 		if lbHost.hostname == newConfig.Host {
-			conn, err = connect(ctx, newConfig)
+			conn, err = connect(context.Background(), newConfig)
 		} else {
 			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
 			oldTLSConfig := newConfig.TLSConfig
@@ -249,7 +249,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 			newConfig.Port = lbHost.port
 			newConfig.controlHost = controlHost
 			newConfig.TLSConfig = oldTLSConfig
-			conn, err = connect(ctx, newConfig)
+			conn, err = connect(context.Background(), newConfig)
 		}
 	}
 	if err != nil {
@@ -276,9 +276,16 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 }
 
 func refreshLoadInfo(li *ClusterLoadInfo) error {
+	li.ctrlCtx, _ = context.WithTimeout(context.Background(), 30*time.Second)
 	if li.controlConn == nil || li.controlConn.IsClosed() {
 		var err error
-		li.ctrlCtx = context.Background()
+		ctrlConfig, err := ParseConfig(li.config.connString)
+		if err != nil {
+			log.Printf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
+			return err
+		}
+		li.config = ctrlConfig
+		li.config.ConnectTimeout = 15 * time.Second
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
 			log.Printf("Could not create control connection to %s\n", li.config.Host)
@@ -356,6 +363,15 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			li.hostPort[host] = uint16(port)
 		}
 	}
+
+	rsError := rows.Err()
+	if rsError != nil {
+		log.Printf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
+		markHostAway(li, li.config.Host)
+		li.controlConn = nil
+		return refreshLoadInfo(li)
+	}
+
 	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
 	for uh, t := range li.unavailableHosts {
