@@ -300,7 +300,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
 				if li.config, err = ParseConfig(newConnString); err == nil {
-					li.ctrlCtx = context.Background()
+					li.ctrlCtx, _ = context.WithTimeout(context.Background(), 30*time.Second)
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
 						log.Printf("Created control connection to host %s", h)
 						break
@@ -317,6 +317,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		}
 	}
 	// defer li.controlConn.Close(li.ctrlCtx)
+	// defer cancel() ?
 
 	li.controlConn.stmtcache.Clear(li.ctrlCtx)
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
