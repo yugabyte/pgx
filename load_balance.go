@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
 	"net"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const NO_SERVERS_MSG = "could not find a server to connect to"
@@ -138,19 +139,19 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 		new, present := <-in
 
 		if !present {
-			log.Println("The requestChannel is closed, load_balance feature will not work")
+			log.Error().Msg("The requestChannel is closed, load_balance feature will not work")
 			break
 		}
 		if new.flags == DECREMENT_COUNT {
 			names := strings.Split(new.clusterName, ",")
 			if len(names) != 2 {
-				log.Printf("cannot parse names to update connection count: %s", new.clusterName)
+				log.Error().Msgf("cannot parse names to update connection count: %s", new.clusterName)
 			} else {
 				cli, ok := clustersLoadInfo[LookupIP(names[0])]
 				if ok {
 					cnt := cli.hostLoad[names[1]]
 					if cnt == 0 {
-						log.Printf("connection count for %s going negative!", names[1])
+						log.Error().Msgf("connection count for %s going negative!", names[1])
 					}
 					cli.hostLoad[names[1]] = cnt - 1
 				}
@@ -208,6 +209,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	requestChan <- newLoadInfo
 	lbHost := <-hostChan
 	if lbHost.err != nil {
+		log.Info().Msg("connectLoadBalanced(): falling back to upstream connect")
 		return connect(ctx, config) // fallback to original behaviour
 	}
 	if lbHost.hostname == config.Host {
@@ -227,13 +229,16 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 
 func connectWithRetries(ctx context.Context, controlHost string, newConfig *ConnConfig,
 	newLoadInfo *ClusterLoadInfo, lbHost *lbHost) (c *Conn, er error) {
+	log.Debug().Msgf("Trying connection to %s", newConfig.Host)
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
 		// log.Println(err.Error() + ", retrying ...")
+		log.Debug().Msgf("Adding %s to unavailable host, Error: %s", lbHost.hostname, err.Error())
 		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
 		requestChan <- newLoadInfo
 		lbHost = <-hostChan
+		log.Debug().Msgf("Trying connection to %s", lbHost.hostname)
 		if lbHost.err != nil {
 			return nil, lbHost.err
 		}
@@ -254,6 +259,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 	}
 	if err != nil {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
+		log.Debug().Msgf("Adding %s to unavailable host, Error: %s", lbHost.hostname, err.Error())
 	}
 	return conn, err
 }
@@ -266,7 +272,7 @@ func decrementConnCount(str string) {
 }
 
 func markHostAway(li *ClusterLoadInfo, h string) {
-	log.Printf("Marking host %s as unreachable", h)
+	log.Debug().Msgf("Marking host %s as unreachable", h)
 	delete(li.hostLoad, h)
 	delete(li.hostPairs, h)
 	if li.unavailableHosts == nil {
@@ -278,39 +284,40 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 func refreshLoadInfo(li *ClusterLoadInfo) error {
 	li.ctrlCtx, _ = context.WithTimeout(context.Background(), 30*time.Second)
 	if li.controlConn == nil || li.controlConn.IsClosed() {
+		log.Info().Msg("Creating new control connection")
 		var err error
 		ctrlConfig, err := ParseConfig(li.config.connString)
 		if err != nil {
-			log.Printf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
+			log.Error().Msgf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
 			return err
 		}
 		li.config = ctrlConfig
 		li.config.ConnectTimeout = 15 * time.Second
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
-			log.Printf("Could not create control connection to %s\n", li.config.Host)
+			log.Error().Msgf("Could not create control connection to %s\n, Error: %s", li.config.Host, err.Error())
 			// remove its hostLoad entry
 			markHostAway(li, li.config.Host)
 			li.controlConn = nil
 			// Attempt connection to other servers which are already fetched in cli.
 			if len(li.hostPairs) > 0 {
-				log.Printf("Attempting control connection to %d other servers ...\n", len(li.hostPairs))
+				log.Debug().Msgf("Attempting control connection to %d other servers ...\n", len(li.hostPairs))
 			}
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
 				if li.config, err = ParseConfig(newConnString); err == nil {
 					li.ctrlCtx = context.Background()
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
-						log.Printf("Created control connection to host %s", h)
+						log.Info().Msgf("Created control connection to host %s", h)
 						break
 					}
-					log.Printf("Could not create control connection to host %s", h)
+					log.Error().Msgf("Could not create control connection to host %s, Error: %s", h, err.Error())
 					markHostAway(li, li.config.Host)
 					li.controlConn = nil
 				}
 			}
 			if err != nil {
-				log.Printf("Failed to create control connection")
+				log.Error().Msgf("Failed to create control connection")
 				return err
 			}
 		}
@@ -320,7 +327,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	li.controlConn.stmtcache.Clear(li.ctrlCtx)
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
 	if err != nil {
-		log.Printf("Could not query load information: %s", err.Error())
+		log.Error().Msgf("Could not query load information: %s", err.Error())
 		markHostAway(li, li.config.Host)
 		li.controlConn = nil
 		return refreshLoadInfo(li)
@@ -338,7 +345,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	for rows.Next() {
 		err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
 		if err != nil {
-			log.Printf("Could not read load information: %s", err.Error())
+			log.Error().Msgf("Could not read load information: %s", err.Error())
 			markHostAway(li, li.config.Host)
 			li.controlConn = nil
 			return refreshLoadInfo(li)
@@ -366,7 +373,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 
 	rsError := rows.Err()
 	if rsError != nil {
-		log.Printf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
+		log.Error().Msgf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
 		markHostAway(li, li.config.Host)
 		li.controlConn = nil
 		return refreshLoadInfo(li)
@@ -377,6 +384,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	for uh, t := range li.unavailableHosts {
 		if time.Now().Unix()-t > li.config.failedHostReconnectDelaySecs {
 			// clear the unavailable-hosts list
+			log.Info().Msgf("Removing %s from unavailableHosts Map", uh)
 			li.hostLoad[uh] = 0
 			delete(li.unavailableHosts, uh)
 		}
@@ -431,6 +439,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			lbh := &lbHost{
 				err: ErrFallbackToOriginalBehaviour,
 			}
+			log.Info().Msg("Returning host with ErrFallbackToOriginalBehaviour()")
 			return lbh
 		}
 	}
@@ -453,6 +462,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			hostname: "",
 			err:      errors.New(NO_SERVERS_MSG),
 		}
+		log.Info().Msg("Returning host with NO_SERVERS_MSG")
 		return lbh
 	}
 	leastLoadedToUse := leastLoaded
@@ -463,6 +473,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				hostname: "",
 				err:      errors.New(NO_SERVERS_MSG),
 			}
+			log.Info().Msg("Returning host with NO_SERVERS_MSG")
 			return lbh
 		}
 	}
@@ -471,6 +482,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		port:     li.hostPort[leastLoaded],
 		err:      nil,
 	}
+	log.Debug().Msgf("%s selected as least loaded server, Increasing its connection count of by 1", leastLoadedToUse)
 	li.hostLoad[leastLoadedToUse] = leastCnt + 1
 	return lbh
 }

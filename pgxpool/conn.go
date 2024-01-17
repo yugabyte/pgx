@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/puddle"
+	"github.com/rs/zerolog/log"
 	"github.com/yugabyte/pgx/v4"
 )
 
@@ -18,6 +19,8 @@ type Conn struct {
 // Release returns c to the pool it was acquired from. Once Release has been called, other methods must not be called.
 // However, it is safe to call Release multiple times. Subsequent calls after the first will be ignored.
 func (c *Conn) Release() {
+	cHost := c.Conn().Config().Host
+	log.Debug().Msgf("Release() called on a connection to %s", cHost)
 	if c.res == nil {
 		return
 	}
@@ -28,6 +31,7 @@ func (c *Conn) Release() {
 
 	now := time.Now()
 	if conn.IsClosed() || conn.PgConn().IsBusy() || conn.PgConn().TxStatus() != 'I' || (now.Sub(res.CreationTime()) > c.p.maxConnLifetime) {
+		log.Debug().Msgf("Destroying a connection to %s", cHost)
 		res.Destroy()
 		return
 	}

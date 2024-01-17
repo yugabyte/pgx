@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/puddle"
+	"github.com/rs/zerolog/log"
 	"github.com/yugabyte/pgx/v4"
 )
 
@@ -163,6 +164,13 @@ func ConnectConfig(ctx context.Context, config *Config) (*Pool, error) {
 		panic("config must be created by ParseConfig")
 	}
 
+	log.Debug().Msg("pool.go:ConnectConfig(): Creting a new pool with following config")
+	log.Debug().Msgf("minConns %d", config.MinConns)
+	log.Debug().Msgf("maxConnLifetime %s", config.MaxConnLifetime)
+	log.Debug().Msgf("maxConnIdleTime %s", config.MaxConnIdleTime)
+	log.Debug().Msgf("healthCheckPeriod %s", config.HealthCheckPeriod)
+	log.Debug().Msgf("maxConns %d", config.MaxConns)
+
 	p := &Pool{
 		config:            config,
 		beforeConnect:     config.BeforeConnect,
@@ -254,11 +262,11 @@ func ConnectConfig(ctx context.Context, config *Config) (*Pool, error) {
 //
 // See Config for definitions of these arguments.
 //
-//   # Example DSN
-//   user=jack password=secret host=pg.example.com port=5433 dbname=mydb sslmode=verify-ca pool_max_conns=10
+//	# Example DSN
+//	user=jack password=secret host=pg.example.com port=5433 dbname=mydb sslmode=verify-ca pool_max_conns=10
 //
-//   # Example URL
-//   postgres://jack:secret@pg.example.com:5433/mydb?sslmode=verify-ca&pool_max_conns=10
+//	# Example URL
+//	postgres://jack:secret@pg.example.com:5433/mydb?sslmode=verify-ca&pool_max_conns=10
 func ParseConfig(connString string) (*Config, error) {
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
@@ -337,6 +345,7 @@ func ParseConfig(connString string) (*Config, error) {
 // Close closes all connections in the pool and rejects future Acquire calls. Blocks until all connections are returned
 // to pool and closed.
 func (p *Pool) Close() {
+	log.Debug().Msg("Closing the pool")
 	p.closeOnce.Do(func() {
 		close(p.closeChan)
 		p.p.Close()
@@ -344,6 +353,7 @@ func (p *Pool) Close() {
 }
 
 func (p *Pool) backgroundHealthCheck() {
+	log.Debug().Msg("Starting healthcheck routine")
 	ticker := time.NewTicker(p.healthCheckPeriod)
 
 	for {
@@ -364,8 +374,10 @@ func (p *Pool) checkIdleConnsHealth() {
 	now := time.Now()
 	for _, res := range resources {
 		if now.Sub(res.CreationTime()) > p.maxConnLifetime {
+			log.Debug().Msgf("MaxConnLifetime over for %v, destroying this connection", res)
 			res.Destroy()
 		} else if res.IdleDuration() > p.maxConnIdleTime {
+			log.Debug().Msgf("MaxConnIdletime over for %v, destroying this connection", res)
 			res.Destroy()
 		} else {
 			res.ReleaseUnused()
@@ -378,6 +390,7 @@ func (p *Pool) checkMinConns() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
+			log.Debug().Msgf("Creating a new connection and adding to pool to achieve MinConns")
 			p.p.CreateResource(ctx)
 		}()
 	}
@@ -418,7 +431,9 @@ func (p *Pool) Acquire(ctx context.Context) (*Conn, error) {
 
 		cr := res.Value().(*connResource)
 		if p.beforeAcquire == nil || p.beforeAcquire(ctx, cr.conn) {
-			return cr.getConn(p, res), nil
+			conn := cr.getConn(p, res)
+			log.Debug().Msgf("A connection to %s is acquired from pool", conn.connResource().conn.Config().Host)
+			return conn, nil
 		}
 
 		res.Destroy()
