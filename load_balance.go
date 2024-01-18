@@ -229,8 +229,8 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 func connectWithRetries(ctx context.Context, controlHost string, newConfig *ConnConfig,
 	newLoadInfo *ClusterLoadInfo, lbHost *lbHost) (c *Conn, er error) {
 	var timeout time.Duration = 0
-	if cur, ok := ctx.Deadline(); ok {
-		timeout = time.Until(cur)
+	if ctxDeadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(ctxDeadline)
 	}
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
@@ -244,7 +244,6 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		}
 		if timeout > 0 {
 			ctx, _ = context.WithTimeout(context.Background(), timeout)
-			//defer cancel()
 		} else {
 			ctx = context.Background()
 		}
@@ -327,7 +326,6 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		}
 	}
 	// defer li.controlConn.Close(li.ctrlCtx)
-	// defer cancel() ?
 
 	li.controlConn.stmtcache.Clear(li.ctrlCtx)
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
