@@ -254,11 +254,11 @@ func ConnectConfig(ctx context.Context, config *Config) (*Pool, error) {
 //
 // See Config for definitions of these arguments.
 //
-// # Example DSN
-// user=jack password=secret host=pg.example.com port=5433 dbname=mydb sslmode=verify-ca pool_max_conns=10
+//   # Example DSN
+//   user=jack password=secret host=pg.example.com port=5433 dbname=mydb sslmode=verify-ca pool_max_conns=10
 //
-// # Example URL
-// postgres://jack:secret@pg.example.com:5433/mydb?sslmode=verify-ca&pool_max_conns=10
+//   # Example URL
+//   postgres://jack:secret@pg.example.com:5433/mydb?sslmode=verify-ca&pool_max_conns=10
 func ParseConfig(connString string) (*Config, error) {
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {

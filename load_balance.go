@@ -234,7 +234,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-		log.Printf("adding %s to unavailableHosts due to %s", newConfig.Host, err.Error())
+		log.Printf("Adding %s to unavailableHosts due to %s", newConfig.Host, err.Error())
 		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
 		requestChan <- newLoadInfo
 		lbHost = <-hostChan
@@ -465,7 +465,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			hostname: "",
 			err:      errors.New(NO_SERVERS_MSG),
 		}
-		log.Panicln("No hosts found, returning with NO_SERVERS_MSG")
+		log.Println("No hosts found, returning with NO_SERVERS_MSG")
 		return lbh
 	}
 	leastLoadedToUse := leastLoaded
