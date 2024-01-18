@@ -20,6 +20,7 @@ const DEFAULT_FAILED_HOST_RECONNECT_DELAY_SECS = 5
 const MAX_FAILED_HOST_RECONNECT_DELAY_SECS = 60
 const MAX_INTERVAL_SECONDS = 600
 const MAX_PREFERENCE_VALUE = 10
+const CONTROL_CONN_TIMEOUT = 15 * time.Second
 
 var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
 
@@ -286,7 +287,7 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 }
 
 func refreshLoadInfo(li *ClusterLoadInfo) error {
-	li.ctrlCtx, _ = context.WithTimeout(context.Background(), 15*time.Second)
+	li.ctrlCtx, _ = context.WithTimeout(context.Background(), CONTROL_CONN_TIMEOUT)
 	if li.controlConn == nil || li.controlConn.IsClosed() {
 		var err error
 		ctrlConfig, err := ParseConfig(li.config.connString)
@@ -295,7 +296,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			return err
 		}
 		li.config = ctrlConfig
-		li.config.ConnectTimeout = 15 * time.Second
+		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
 			log.Printf("Could not create control connection to %s\n", li.config.Host)
@@ -309,7 +310,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
 				if li.config, err = ParseConfig(newConnString); err == nil {
-					li.ctrlCtx, _ = context.WithTimeout(context.Background(), 15*time.Second)
+					li.ctrlCtx, _ = context.WithTimeout(context.Background(), CONTROL_CONN_TIMEOUT)
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
 						log.Printf("Created control connection to host %s", h)
 						break
