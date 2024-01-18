@@ -228,6 +228,10 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 
 func connectWithRetries(ctx context.Context, controlHost string, newConfig *ConnConfig,
 	newLoadInfo *ClusterLoadInfo, lbHost *lbHost) (c *Conn, er error) {
+	var timeout time.Duration = 0
+	if cur, ok := ctx.Deadline(); ok {
+		timeout = time.Until(cur)
+	}
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
@@ -238,8 +242,14 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		if lbHost.err != nil {
 			return nil, lbHost.err
 		}
+		if timeout > 0 {
+			ctx, _ = context.WithTimeout(context.Background(), timeout)
+			//defer cancel()
+		} else {
+			ctx = context.Background()
+		}
 		if lbHost.hostname == newConfig.Host {
-			conn, err = connect(context.Background(), newConfig)
+			conn, err = connect(ctx, newConfig)
 		} else {
 			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
 			oldTLSConfig := newConfig.TLSConfig
@@ -250,7 +260,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 			newConfig.Port = lbHost.port
 			newConfig.controlHost = controlHost
 			newConfig.TLSConfig = oldTLSConfig
-			conn, err = connect(context.Background(), newConfig)
+			conn, err = connect(ctx, newConfig)
 		}
 	}
 	if err != nil {
