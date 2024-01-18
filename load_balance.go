@@ -208,7 +208,6 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	requestChan <- newLoadInfo
 	lbHost := <-hostChan
 	if lbHost.err != nil {
-		log.Printf("Could not load balance connections, falling back to upstream behaviour, %s", lbHost.err)
 		return connect(ctx, config) // fallback to original behaviour
 	}
 	if lbHost.hostname == config.Host {
@@ -287,7 +286,7 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 }
 
 func refreshLoadInfo(li *ClusterLoadInfo) error {
-	li.ctrlCtx, _ = context.WithTimeout(context.Background(), 30*time.Second)
+	li.ctrlCtx, _ = context.WithTimeout(context.Background(), 15*time.Second)
 	if li.controlConn == nil || li.controlConn.IsClosed() {
 		var err error
 		ctrlConfig, err := ParseConfig(li.config.connString)
@@ -310,7 +309,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
 				if li.config, err = ParseConfig(newConnString); err == nil {
-					li.ctrlCtx, _ = context.WithTimeout(context.Background(), 30*time.Second)
+					li.ctrlCtx, _ = context.WithTimeout(context.Background(), 15*time.Second)
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
 						log.Printf("Created control connection to host %s", h)
 						break
@@ -389,6 +388,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	for uh, t := range li.unavailableHosts {
 		if time.Now().Unix()-t > li.config.failedHostReconnectDelaySecs {
 			// clear the unavailable-hosts list
+			log.Printf("Removing %s from unavailableHosts Map", uh)
 			li.hostLoad[uh] = 0
 			delete(li.unavailableHosts, uh)
 		}
@@ -408,7 +408,6 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				if toCheckStar[2] == "*" {
 					tk = toCheckStar[0] + "." + toCheckStar[1]
 				}
-				log.Printf("Including all nodes for tk %s", tk)
 				servers = append(servers, li.zoneList[tk]...)
 			}
 			for _, h := range servers {
@@ -424,8 +423,6 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			}
 			if leastCnt != int(math.MaxInt64) && len(leastLoadedservers) != 0 {
 				break
-			} else {
-				log.Printf("Did not find any UP nodes in %s", li.config.topologyKeys[i])
 			}
 		}
 	}
@@ -468,6 +465,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			hostname: "",
 			err:      errors.New(NO_SERVERS_MSG),
 		}
+		log.Panicln("No hosts found, returning with NO_SERVERS_MSG")
 		return lbh
 	}
 	leastLoadedToUse := leastLoaded
@@ -478,6 +476,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				hostname: "",
 				err:      errors.New(NO_SERVERS_MSG),
 			}
+			log.Println("No hosts and public ip found, returning with NO_SERVERS_MSG")
 			return lbh
 		}
 	}

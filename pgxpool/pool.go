@@ -3,7 +3,6 @@ package pgxpool
 import (
 	"context"
 	"fmt"
-	"log"
 	"runtime"
 	"strconv"
 	"sync"
@@ -255,11 +254,11 @@ func ConnectConfig(ctx context.Context, config *Config) (*Pool, error) {
 //
 // See Config for definitions of these arguments.
 //
-//	# Example DSN
-//	user=jack password=secret host=pg.example.com port=5433 dbname=mydb sslmode=verify-ca pool_max_conns=10
+// # Example DSN
+// user=jack password=secret host=pg.example.com port=5433 dbname=mydb sslmode=verify-ca pool_max_conns=10
 //
-//	# Example URL
-//	postgres://jack:secret@pg.example.com:5433/mydb?sslmode=verify-ca&pool_max_conns=10
+// # Example URL
+// postgres://jack:secret@pg.example.com:5433/mydb?sslmode=verify-ca&pool_max_conns=10
 func ParseConfig(connString string) (*Config, error) {
 	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
@@ -419,9 +418,7 @@ func (p *Pool) Acquire(ctx context.Context) (*Conn, error) {
 
 		cr := res.Value().(*connResource)
 		if p.beforeAcquire == nil || p.beforeAcquire(ctx, cr.conn) {
-			conn := cr.getConn(p, res)
-			log.Printf("A connection to %s is acquired from pool", conn.connResource().conn.Config().Host)
-			return conn, nil
+			return cr.getConn(p, res), nil
 		}
 
 		res.Destroy()
