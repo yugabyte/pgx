@@ -20,6 +20,7 @@ const DEFAULT_FAILED_HOST_RECONNECT_DELAY_SECS = 5
 const MAX_FAILED_HOST_RECONNECT_DELAY_SECS = 60
 const MAX_INTERVAL_SECONDS = 600
 const MAX_PREFERENCE_VALUE = 10
+const CONTROL_CONN_TIMEOUT = 15 * time.Second
 
 var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
 
@@ -227,15 +228,24 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 
 func connectWithRetries(ctx context.Context, controlHost string, newConfig *ConnConfig,
 	newLoadInfo *ClusterLoadInfo, lbHost *lbHost) (c *Conn, er error) {
+	var timeout time.Duration = 0
+	if ctxDeadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(ctxDeadline)
+	}
 	conn, err := connect(ctx, newConfig)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
 		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-		// log.Println(err.Error() + ", retrying ...")
+		log.Printf("Adding %s to unavailableHosts due to %s", newConfig.Host, err.Error())
 		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
 		requestChan <- newLoadInfo
 		lbHost = <-hostChan
 		if lbHost.err != nil {
 			return nil, lbHost.err
+		}
+		if timeout > 0 {
+			ctx, _ = context.WithTimeout(context.Background(), timeout)
+		} else {
+			ctx = context.Background()
 		}
 		if lbHost.hostname == newConfig.Host {
 			conn, err = connect(ctx, newConfig)
@@ -276,9 +286,16 @@ func markHostAway(li *ClusterLoadInfo, h string) {
 }
 
 func refreshLoadInfo(li *ClusterLoadInfo) error {
+	li.ctrlCtx, _ = context.WithTimeout(context.Background(), CONTROL_CONN_TIMEOUT)
 	if li.controlConn == nil || li.controlConn.IsClosed() {
 		var err error
-		li.ctrlCtx = context.Background()
+		ctrlConfig, err := ParseConfig(li.config.connString)
+		if err != nil {
+			log.Printf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
+			return err
+		}
+		li.config = ctrlConfig
+		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
 			log.Printf("Could not create control connection to %s\n", li.config.Host)
@@ -292,7 +309,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
 				if li.config, err = ParseConfig(newConnString); err == nil {
-					li.ctrlCtx = context.Background()
+					li.ctrlCtx, _ = context.WithTimeout(context.Background(), CONTROL_CONN_TIMEOUT)
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
 						log.Printf("Created control connection to host %s", h)
 						break
@@ -356,11 +373,21 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			li.hostPort[host] = uint16(port)
 		}
 	}
+
+	rsError := rows.Err()
+	if rsError != nil {
+		log.Printf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
+		markHostAway(li, li.config.Host)
+		li.controlConn = nil
+		return refreshLoadInfo(li)
+	}
+
 	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
 	for uh, t := range li.unavailableHosts {
 		if time.Now().Unix()-t > li.config.failedHostReconnectDelaySecs {
 			// clear the unavailable-hosts list
+			log.Printf("Removing %s from unavailableHosts Map", uh)
 			li.hostLoad[uh] = 0
 			delete(li.unavailableHosts, uh)
 		}
@@ -437,6 +464,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 			hostname: "",
 			err:      errors.New(NO_SERVERS_MSG),
 		}
+		log.Println("No hosts found, returning with NO_SERVERS_MSG")
 		return lbh
 	}
 	leastLoadedToUse := leastLoaded
@@ -447,6 +475,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				hostname: "",
 				err:      errors.New(NO_SERVERS_MSG),
 			}
+			log.Println("No hosts and public ip found, returning with NO_SERVERS_MSG")
 			return lbh
 		}
 	}
