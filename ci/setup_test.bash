@@ -9,29 +9,41 @@ then
   sudo sh -c "echo deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main $PGVERSION >> /etc/apt/sources.list.d/postgresql.list"
   sudo apt-get update -qq
   sudo apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::="--force-confnew" install postgresql-$PGVERSION postgresql-server-dev-$PGVERSION postgresql-contrib-$PGVERSION
-  sudo chmod 777 /etc/postgresql/$PGVERSION/main/pg_hba.conf
-  echo "local     all         postgres                          trust"    >  /etc/postgresql/$PGVERSION/main/pg_hba.conf
-  echo "local     all         all                               trust"    >> /etc/postgresql/$PGVERSION/main/pg_hba.conf
-  echo "host      all         pgx_md5     127.0.0.1/32          md5"      >> /etc/postgresql/$PGVERSION/main/pg_hba.conf
-  sudo chmod 777 /etc/postgresql/$PGVERSION/main/postgresql.conf
-  if $(dpkg --compare-versions $PGVERSION ge 9.6) ; then
-    echo "wal_level='logical'"     >> /etc/postgresql/$PGVERSION/main/postgresql.conf
-    echo "max_wal_senders=5"       >> /etc/postgresql/$PGVERSION/main/postgresql.conf
-    echo "max_replication_slots=5" >> /etc/postgresql/$PGVERSION/main/postgresql.conf
-  fi
+
+  sudo cp testsetup/pg_hba.conf /etc/postgresql/$PGVERSION/main/pg_hba.conf
+  sudo sh -c "echo \"listen_addresses = '127.0.0.1'\" >> /etc/postgresql/$PGVERSION/main/postgresql.conf"
+  sudo sh -c "cat testsetup/postgresql_ssl.conf >> /etc/postgresql/$PGVERSION/main/postgresql.conf"
+
+  cd testsetup
+
+  # Generate CA, server, and encrypted client certificates.
+  go run generate_certs.go
+
+  # Copy certificates to server directory and set permissions.
+  sudo cp ca.pem /var/lib/postgresql/$PGVERSION/main/root.crt
+  sudo chown postgres:postgres /var/lib/postgresql/$PGVERSION/main/root.crt
+  sudo cp localhost.key /var/lib/postgresql/$PGVERSION/main/server.key
+  sudo chown postgres:postgres /var/lib/postgresql/$PGVERSION/main/server.key
+  sudo chmod 600 /var/lib/postgresql/$PGVERSION/main/server.key
+  sudo cp localhost.crt /var/lib/postgresql/$PGVERSION/main/server.crt
+  sudo chown postgres:postgres /var/lib/postgresql/$PGVERSION/main/server.crt
+
+  cp ca.pem /tmp
+  cp pgx_sslcert.key /tmp
+  cp pgx_sslcert.crt /tmp
+
+  cd ..
+
   sudo /etc/init.d/postgresql restart
 
-  psql -U postgres -c 'create database pgx_test'
-  psql -U postgres pgx_test -c 'create extension hstore'
-  psql -U postgres pgx_test -c 'create domain uint64 as numeric(20,0)'
-  psql -U postgres -c "create user pgx_md5 SUPERUSER PASSWORD 'secret'"
-  psql -U postgres -c "create user `whoami`"
+  createdb -U postgres pgx_test
+  psql -U postgres -f testsetup/postgresql_setup.sql pgx_test
 fi
 
 if [[ "${PGVERSION-}" =~ ^cockroach ]]
 then
-  wget -qO- https://binaries.cockroachdb.com/cockroach-v20.2.5.linux-amd64.tgz | tar xvz
-  sudo mv cockroach-v20.2.5.linux-amd64/cockroach /usr/local/bin/
+  wget -qO- https://binaries.cockroachdb.com/cockroach-v23.1.3.linux-amd64.tgz | tar xvz
+  sudo mv cockroach-v23.1.3.linux-amd64/cockroach /usr/local/bin/
   cockroach start-single-node --insecure --background --listen-addr=localhost
   cockroach sql --insecure -e 'create database pgx_test'
 fi

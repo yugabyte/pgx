@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/yugabyte/pgx/v4"
+	"github.com/yugabyte/pgx/v5"
 )
 
 var conn *pgx.Conn

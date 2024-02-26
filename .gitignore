@@ -22,3 +22,6 @@ _testmain.go
 *.exe
 
 .envrc
+/.testdb
+
+.DS_Store

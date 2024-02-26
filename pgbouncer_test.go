@@ -5,11 +5,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgconn/stmtcache"
-	"github.com/yugabyte/pgx/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yugabyte/pgx/v5"
 )
 
 func TestPgbouncerStatementCacheDescribe(t *testing.T) {
@@ -19,9 +17,8 @@ func TestPgbouncerStatementCacheDescribe(t *testing.T) {
 	}
 
 	config := mustParseConfig(t, connString)
-	config.BuildStatementCache = func(conn *pgconn.PgConn) stmtcache.Cache {
-		return stmtcache.New(conn, stmtcache.ModeDescribe, 1024)
-	}
+	config.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
+	config.DescriptionCacheCapacity = 1024
 
 	testPgbouncer(t, config, 10, 100)
 }
@@ -33,8 +30,7 @@ func TestPgbouncerSimpleProtocol(t *testing.T) {
 	}
 
 	config := mustParseConfig(t, connString)
-	config.BuildStatementCache = nil
-	config.PreferSimpleProtocol = true
+	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	testPgbouncer(t, config, 10, 100)
 }
