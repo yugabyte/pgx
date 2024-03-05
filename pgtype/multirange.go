@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/jackc/pgx/v5/internal/pgio"
+	"github.com/yugabyte/pgx/v5/internal/pgio"
 )
 
 // MultirangeGetter is a type that can be converted into a PostgreSQL multirange.

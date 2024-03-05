@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	pgx "github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	pgx "github.com/yugabyte/pgx/v5"
 )
 
 func TestEnumCodec(t *testing.T) {

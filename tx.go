@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yugabyte/pgx/v5/pgconn"
 )
 
 // TxIsoLevel is the transaction isolation level (serializable, repeatable read, read committed or read uncommitted)

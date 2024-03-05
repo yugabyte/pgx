@@ -3,7 +3,7 @@ package pgproto3
 import (
 	"encoding/json"
 
-	"github.com/jackc/pgx/v5/internal/pgio"
+	"github.com/yugabyte/pgx/v5/internal/pgio"
 )
 
 type GSSResponse struct {

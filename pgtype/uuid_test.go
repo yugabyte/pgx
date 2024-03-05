@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxtest"
 	"github.com/stretchr/testify/require"
+	"github.com/yugabyte/pgx/v5/pgtype"
+	"github.com/yugabyte/pgx/v5/pgxtest"
 )
 
 func TestUUIDCodec(t *testing.T) {

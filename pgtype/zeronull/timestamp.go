@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/yugabyte/pgx/v5/pgtype"
 )
 
 type Timestamp time.Time

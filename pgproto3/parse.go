@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 
-	"github.com/jackc/pgx/v5/internal/pgio"
+	"github.com/yugabyte/pgx/v5/internal/pgio"
 )
 
 type Parse struct {

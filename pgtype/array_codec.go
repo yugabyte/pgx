@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/jackc/pgx/v5/internal/anynil"
-	"github.com/jackc/pgx/v5/internal/pgio"
+	"github.com/yugabyte/pgx/v5/internal/anynil"
+	"github.com/yugabyte/pgx/v5/internal/pgio"
 )
 
 // ArrayGetter is a type that can be converted into a PostgreSQL array.

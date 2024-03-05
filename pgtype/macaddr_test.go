@@ -6,7 +6,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxtest"
+	"github.com/yugabyte/pgx/v5/pgxtest"
 )
 
 func isExpectedEqHardwareAddr(a any) func(any) bool {

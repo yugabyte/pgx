@@ -3,7 +3,7 @@ package zeronull
 import (
 	"database/sql/driver"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/yugabyte/pgx/v5/pgtype"
 )
 
 type UUID [16]byte

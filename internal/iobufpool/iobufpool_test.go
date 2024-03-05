@@ -3,8 +3,8 @@ package iobufpool_test
 import (
 	"testing"
 
-	"github.com/jackc/pgx/v5/internal/iobufpool"
 	"github.com/stretchr/testify/assert"
+	"github.com/yugabyte/pgx/v5/internal/iobufpool"
 )
 
 func TestGetCap(t *testing.T) {

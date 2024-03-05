@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yugabyte/pgx/v5"
 )
 
 func openDB(t testing.TB) *sql.DB {

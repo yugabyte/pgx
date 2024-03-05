@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype/zeronull"
-	"github.com/jackc/pgx/v5/pgxtest"
 	"github.com/stretchr/testify/require"
+	"github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgtype/zeronull"
+	"github.com/yugabyte/pgx/v5/pgxtest"
 )
 
 var defaultConnTestRunner pgxtest.ConnTestRunner
