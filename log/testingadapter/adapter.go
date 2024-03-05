@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/yugabyte/pgx/v5/tracelog"
+	"github.com/jackc/pgx/v5/tracelog"
 )
 
 // TestingLogger interface defines the subset of testing.TB methods used by this

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/internal/anynil"
-	"github.com/yugabyte/pgx/v5/internal/sanitize"
+	"github.com/jackc/pgx/v5/internal/sanitize"
 	"github.com/jackc/pgx/v5/internal/stmtcache"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -94,6 +94,7 @@ type Conn struct {
 	eqb  ExtendedQueryBuilder
 
 	closeCntUpdated bool
+}
 
 // Identifier a PostgreSQL identifier or name. Identifiers can be composed of
 // multiple parts such as ["schema", "table"] or ["table", "column"].
@@ -160,7 +161,7 @@ func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 	} else {
 		return connect(ctx, connConfig)
 	}
-}	
+}
 
 // ParseConfigWithOptions behaves exactly as ParseConfig does with the addition of options. At the present options is
 // only used to provide a GetSSLPassword function.
@@ -279,9 +280,6 @@ func ParseConfigWithOptions(connString string, options ParseConfigOptions) (*Con
 	connConfig := &ConnConfig{
 		Config:                       *config,
 		createdByParseConfig:         true,
-		LogLevel:                     LogLevelInfo,
-		BuildStatementCache:          buildStatementCache,
-		PreferSimpleProtocol:         preferSimpleProtocol,
 		connString:                   connString,
 		controlHost:                  config.Host,
 		loadBalance:                  loadBalance,
@@ -289,9 +287,9 @@ func ParseConfigWithOptions(connString string, options ParseConfigOptions) (*Con
 		refreshInterval:              refreshInterval,
 		fallbackToTopologyKeysOnly:   fallbackToTopologyKeysOnly,
 		failedHostReconnectDelaySecs: failedHostReconnectDelaySecs,
-		StatementCacheCapacity:   statementCacheCapacity,
-		DescriptionCacheCapacity: descriptionCacheCapacity,
-		DefaultQueryExecMode:     defaultQueryExecMode,
+		StatementCacheCapacity:       statementCacheCapacity,
+		DescriptionCacheCapacity:     descriptionCacheCapacity,
+		DefaultQueryExecMode:         defaultQueryExecMode,
 	}
 
 	return connConfig, nil
@@ -390,9 +388,6 @@ func (c *Conn) Close(ctx context.Context) error {
 	}
 
 	err := c.pgConn.Close(ctx)
-	if c.shouldLog(LogLevelInfo) {
-		c.log(ctx, LogLevelInfo, "closed connection", nil)
-	}
 
 	if !c.closeCntUpdated && c.config.loadBalance {
 		c.closeCntUpdated = true

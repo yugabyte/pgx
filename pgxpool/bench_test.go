@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-	"github.com/yugabyte/pgx/v5"
-	"github.com/yugabyte/pgx/v5/pgxpool"
 )
 
 func BenchmarkAcquireAndRelease(b *testing.B) {
