@@ -295,6 +295,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			return err
 		}
 		li.config = ctrlConfig
+		li.config.Host = LookupIP(li.config.Host)
 		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
@@ -352,6 +353,8 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			li.controlConn = nil
 			return refreshLoadInfo(li)
 		} else {
+			host = LookupIP(host)
+			publicIP = LookupIP(publicIP)
 			newHostPairs[host] = publicIP
 			tk := cloud + "." + region + "." + zone
 			tk_star := cloud + "." + region // Used for topology_keys of type: cloud.region.*
