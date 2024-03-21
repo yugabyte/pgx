@@ -73,8 +73,7 @@ Details about the upstream pgx driver - which hold true for this driver as well 
 
 pgx is a pure Go driver and toolkit for PostgreSQL.
 
-The pgx driver is a low-level, high performance interface that exposes PostgreSQL-specific features such as `LISTEN` /
-`NOTIFY` and `COPY`. It also includes an adapter for the standard `database/sql` interface.
+The pgx driver is a low-level, high performance interface. It also includes an adapter for the standard `database/sql` interface.
 
 The toolkit component is a related set of packages that implement PostgreSQL functionality such as parsing the wire protocol
 and type mapping between PostgreSQL and Go. These underlying packages can be used to implement alternative drivers,
@@ -127,7 +126,6 @@ See the [getting started guide](https://github.com/jackc/pgx/wiki/Getting-starte
 * `COPY` protocol support for faster bulk data loads
 * Tracing and logging support
 * Connection pool with after-connect hook for arbitrary connection setup
-* `LISTEN` / `NOTIFY`
 * Conversion of PostgreSQL arrays to Go slice mappings for integers, floats, and strings
 * `hstore` support
 * `json` and `jsonb` support
@@ -140,8 +138,7 @@ See the [getting started guide](https://github.com/jackc/pgx/wiki/Getting-starte
 
 ## Choosing Between the pgx and database/sql Interfaces
 
-The pgx interface is faster. Many PostgreSQL specific features such as `LISTEN` / `NOTIFY` and `COPY` are not available
-through the `database/sql` interface.
+The pgx interface is faster.
 
 The pgx interface is recommended when:
 

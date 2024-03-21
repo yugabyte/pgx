@@ -2,7 +2,7 @@
 /*
 pgx provides a native PostgreSQL driver and can act as a database/sql driver. The native PostgreSQL interface is similar
 to the database/sql interface while providing better speed and access to PostgreSQL specific features. Use
-github.com/jackc/pgx/v5/stdlib to use pgx as a database/sql compatible driver. See that package's documentation for
+github.com/yugabyte/pgx/v5/stdlib to use pgx as a database/sql compatible driver. See that package's documentation for
 details.
 
 Establishing a Connection
@@ -18,7 +18,7 @@ here. In addition, a config struct can be created by [ParseConfig] and modified 
 Connection Pool
 
 [*pgx.Conn] represents a single connection to the database and is not concurrency safe. Use package
-github.com/jackc/pgx/v5/pgxpool for a concurrency safe connection pool.
+github.com/yugabyte/pgx/v5/pgxpool for a concurrency safe connection pool.
 
 Query Interface
 
@@ -155,34 +155,17 @@ When you already have a typed array using CopyFromSlice can be more convenient.
 
 CopyFrom can be faster than an insert with as few as 5 rows.
 
-Listen and Notify
-
-pgx can listen to the PostgreSQL notification system with the `Conn.WaitForNotification` method. It blocks until a
-notification is received or the context is canceled.
-
-    _, err := conn.Exec(context.Background(), "listen channelname")
-    if err != nil {
-        return err
-    }
-
-    notification, err := conn.WaitForNotification(context.Background())
-    if err != nil {
-        return err
-    }
-    // do something with notification
-
-
 Tracing and Logging
 
 pgx supports tracing by setting ConnConfig.Tracer.
 
 In addition, the tracelog package provides the TraceLog type which lets a traditional logger act as a Tracer.
 
-For debug tracing of the actual PostgreSQL wire protocol messages see github.com/jackc/pgx/v5/pgproto3.
+For debug tracing of the actual PostgreSQL wire protocol messages see github.com/yugabyte/pgx/v5/pgproto3.
 
 Lower Level PostgreSQL Functionality
 
-github.com/jackc/pgx/v5/pgconn contains a lower level PostgreSQL driver roughly at the level of libpq. pgx.Conn in
+github.com/yugabyte/pgx/v5/pgconn contains a lower level PostgreSQL driver roughly at the level of libpq. pgx.Conn in
 implemented on top of pgconn. The Conn.PgConn() method can be used to access this lower layer.
 
 PgBouncer
