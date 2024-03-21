@@ -295,6 +295,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			return err
 		}
 		li.config = ctrlConfig
+		li.config.Host = LookupIP(li.config.Host)
 		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
@@ -327,7 +328,6 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	}
 	// defer li.controlConn.Close(li.ctrlCtx)
 
-	li.controlConn.stmtcache.Clear(li.ctrlCtx)
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
 	if err != nil {
 		log.Printf("Could not query load information: %s", err.Error())
@@ -339,9 +339,9 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	var host, nodeType, cloud, region, zone, publicIP string
 	var port, numConns int
 	newHostLoad := make(map[string]int)
-	li.hostPort = make(map[string]uint16)
-	li.zoneList = make(map[string][]string)
-	li.hostPairs = make(map[string]string)
+	newHostPort := make(map[string]uint16)
+	newZoneList := make(map[string][]string)
+	newHostPairs := make(map[string]string)
 	if li.unavailableHosts == nil {
 		li.unavailableHosts = make(map[string]int64)
 	}
@@ -353,24 +353,26 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			li.controlConn = nil
 			return refreshLoadInfo(li)
 		} else {
-			li.hostPairs[host] = publicIP
+			host = LookupIP(host)
+			publicIP = LookupIP(publicIP)
+			newHostPairs[host] = publicIP
 			tk := cloud + "." + region + "." + zone
 			tk_star := cloud + "." + region // Used for topology_keys of type: cloud.region.*
-			hosts, ok := li.zoneList[tk]
+			hosts, ok := newZoneList[tk]
 			if !ok {
 				hosts = make([]string, 0)
 			}
-			hosts_star, ok_star := li.zoneList[tk_star]
+			hosts_star, ok_star := newZoneList[tk_star]
 			if !ok_star {
 				hosts_star = make([]string, 0)
 			}
 			hosts = append(hosts, host)
 			hosts_star = append(hosts_star, host)
-			li.zoneList[tk] = hosts
-			li.zoneList[tk_star] = hosts_star
+			newZoneList[tk] = hosts
+			newZoneList[tk_star] = hosts_star
 			cnt := li.hostLoad[host]
 			newHostLoad[host] = cnt
-			li.hostPort[host] = uint16(port)
+			newHostPort[host] = uint16(port)
 		}
 	}
 
@@ -381,7 +383,9 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		li.controlConn = nil
 		return refreshLoadInfo(li)
 	}
-
+	li.hostPort = newHostPort
+	li.zoneList = newZoneList
+	li.hostPairs = newHostPairs
 	li.hostLoad = newHostLoad
 	li.lastRefresh = time.Now()
 	for uh, t := range li.unavailableHosts {

@@ -1,21 +1,22 @@
-module github.com/yugabyte/pgx/v4
+module github.com/yugabyte/pgx/v5
 
-go 1.13
+go 1.19
 
 require (
-	github.com/Masterminds/semver/v3 v3.1.1
-	github.com/cockroachdb/apd v1.1.0
-	github.com/go-kit/log v0.1.0
-	github.com/gofrs/uuid v4.0.0+incompatible
-	github.com/jackc/pgconn v1.11.0
-	github.com/jackc/pgio v1.0.0
-	github.com/jackc/pgproto3/v2 v2.2.0
-	github.com/jackc/pgtype v1.10.0
-	github.com/jackc/puddle v1.2.1
-	github.com/rs/zerolog v1.15.0
-	github.com/shopspring/decimal v1.2.0
-	github.com/sirupsen/logrus v1.4.2
-	github.com/stretchr/testify v1.7.0
-	go.uber.org/zap v1.13.0
-	gopkg.in/inconshreveable/log15.v2 v2.0.0-20180818164646-67afb5ed74ec
+	github.com/jackc/pgpassfile v1.0.0
+	github.com/jackc/pgservicefile v0.0.0-20231201235250-de7065d80cb9
+	github.com/jackc/puddle/v2 v2.2.1
+	github.com/stretchr/testify v1.8.4
+	golang.org/x/crypto v0.20.0
+	golang.org/x/text v0.14.0
+)
+
+require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/kr/pretty v0.1.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	golang.org/x/sync v0.6.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

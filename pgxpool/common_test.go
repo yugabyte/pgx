@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yugabyte/pgx/v4/pgxpool"
+	"github.com/yugabyte/pgx/v5/pgxpool"
 
-	"github.com/jackc/pgconn"
-	"github.com/yugabyte/pgx/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgconn"
 )
 
 // Conn.Release is an asynchronous process that returns immediately. There is no signal when the actual work is
@@ -21,23 +21,23 @@ func waitForReleaseToComplete() {
 }
 
 type execer interface {
-	Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error)
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
-func testExec(t *testing.T, db execer) {
-	results, err := db.Exec(context.Background(), "set time zone 'America/Chicago'")
+func testExec(t *testing.T, ctx context.Context, db execer) {
+	results, err := db.Exec(ctx, "set time zone 'America/Chicago'")
 	require.NoError(t, err)
-	assert.EqualValues(t, "SET", results)
+	assert.EqualValues(t, "SET", results.String())
 }
 
 type queryer interface {
-	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-func testQuery(t *testing.T, db queryer) {
+func testQuery(t *testing.T, ctx context.Context, db queryer) {
 	var sum, rowCount int32
 
-	rows, err := db.Query(context.Background(), "select generate_series(1,$1)", 10)
+	rows, err := db.Query(ctx, "select generate_series(1,$1)", 10)
 	require.NoError(t, err)
 
 	for rows.Next() {
@@ -53,12 +53,12 @@ func testQuery(t *testing.T, db queryer) {
 }
 
 type queryRower interface {
-	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-func testQueryRow(t *testing.T, db queryRower) {
+func testQueryRow(t *testing.T, ctx context.Context, db queryRower) {
 	var what, who string
-	err := db.QueryRow(context.Background(), "select 'hello', $1::text", "world").Scan(&what, &who)
+	err := db.QueryRow(ctx, "select 'hello', $1::text", "world").Scan(&what, &who)
 	assert.NoError(t, err)
 	assert.Equal(t, "hello", what)
 	assert.Equal(t, "world", who)
@@ -68,12 +68,12 @@ type sendBatcher interface {
 	SendBatch(context.Context, *pgx.Batch) pgx.BatchResults
 }
 
-func testSendBatch(t *testing.T, db sendBatcher) {
+func testSendBatch(t *testing.T, ctx context.Context, db sendBatcher) {
 	batch := &pgx.Batch{}
 	batch.Queue("select 1")
 	batch.Queue("select 2")
 
-	br := db.SendBatch(context.Background(), batch)
+	br := db.SendBatch(ctx, batch)
 
 	var err error
 	var n int32
@@ -93,29 +93,29 @@ type copyFromer interface {
 	CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error)
 }
 
-func testCopyFrom(t *testing.T, db interface {
+func testCopyFrom(t *testing.T, ctx context.Context, db interface {
 	execer
 	queryer
 	copyFromer
 }) {
-	_, err := db.Exec(context.Background(), `create temporary table foo(a int2, b int4, c int8, d varchar, e text, f date, g timestamptz)`)
+	_, err := db.Exec(ctx, `create temporary table foo(a int2, b int4, c int8, d varchar, e text, f date, g timestamptz)`)
 	require.NoError(t, err)
 
 	tzedTime := time.Date(2010, 2, 3, 4, 5, 6, 0, time.Local)
 
-	inputRows := [][]interface{}{
+	inputRows := [][]any{
 		{int16(0), int32(1), int64(2), "abc", "efg", time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), tzedTime},
 		{nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	copyCount, err := db.CopyFrom(context.Background(), pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"}, pgx.CopyFromRows(inputRows))
+	copyCount, err := db.CopyFrom(ctx, pgx.Identifier{"foo"}, []string{"a", "b", "c", "d", "e", "f", "g"}, pgx.CopyFromRows(inputRows))
 	assert.NoError(t, err)
 	assert.EqualValues(t, len(inputRows), copyCount)
 
-	rows, err := db.Query(context.Background(), "select * from foo")
+	rows, err := db.Query(ctx, "select * from foo")
 	assert.NoError(t, err)
 
-	var outputRows [][]interface{}
+	var outputRows [][]any
 	for rows.Next() {
 		row, err := rows.Values()
 		if err != nil {
@@ -148,7 +148,6 @@ func assertConfigsEqual(t *testing.T, expected, actual *pgxpool.Config, testName
 	assert.Equalf(t, expected.MaxConns, actual.MaxConns, "%s - MaxConns", testName)
 	assert.Equalf(t, expected.MinConns, actual.MinConns, "%s - MinConns", testName)
 	assert.Equalf(t, expected.HealthCheckPeriod, actual.HealthCheckPeriod, "%s - HealthCheckPeriod", testName)
-	assert.Equalf(t, expected.LazyConnect, actual.LazyConnect, "%s - LazyConnect", testName)
 
 	assertConnConfigsEqual(t, expected.ConnConfig, actual.ConnConfig, testName)
 }
@@ -161,15 +160,12 @@ func assertConnConfigsEqual(t *testing.T, expected, actual *pgx.ConnConfig, test
 		return
 	}
 
-	assert.Equalf(t, expected.Logger, actual.Logger, "%s - Logger", testName)
-	assert.Equalf(t, expected.LogLevel, actual.LogLevel, "%s - LogLevel", testName)
+	assert.Equalf(t, expected.Tracer, actual.Tracer, "%s - Tracer", testName)
 	assert.Equalf(t, expected.ConnString(), actual.ConnString(), "%s - ConnString", testName)
-
-	// Can't test function equality, so just test that they are set or not.
-	assert.Equalf(t, expected.BuildStatementCache == nil, actual.BuildStatementCache == nil, "%s - BuildStatementCache", testName)
-
-	assert.Equalf(t, expected.PreferSimpleProtocol, actual.PreferSimpleProtocol, "%s - PreferSimpleProtocol", testName)
-
+	assert.Equalf(t, expected.StatementCacheCapacity, actual.StatementCacheCapacity, "%s - StatementCacheCapacity", testName)
+	assert.Equalf(t, expected.DescriptionCacheCapacity, actual.DescriptionCacheCapacity, "%s - DescriptionCacheCapacity", testName)
+	assert.Equalf(t, expected.DefaultQueryExecMode, actual.DefaultQueryExecMode, "%s - DefaultQueryExecMode", testName)
+	assert.Equalf(t, expected.DefaultQueryExecMode, actual.DefaultQueryExecMode, "%s - DefaultQueryExecMode", testName)
 	assert.Equalf(t, expected.Host, actual.Host, "%s - Host", testName)
 	assert.Equalf(t, expected.Database, actual.Database, "%s - Database", testName)
 	assert.Equalf(t, expected.Port, actual.Port, "%s - Port", testName)

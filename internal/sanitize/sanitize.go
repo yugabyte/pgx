@@ -12,13 +12,19 @@ import (
 
 // Part is either a string or an int. A string is raw SQL. An int is a
 // argument placeholder.
-type Part interface{}
+type Part any
 
 type Query struct {
 	Parts []Part
 }
 
-func (q *Query) Sanitize(args ...interface{}) (string, error) {
+// utf.DecodeRune returns the utf8.RuneError for errors. But that is actually rune U+FFFD -- the unicode replacement
+// character. utf8.RuneError is not an error if it is also width 3.
+//
+// https://github.com/jackc/pgx/issues/1380
+const replacementcharacterwidth = 3
+
+func (q *Query) Sanitize(args ...any) (string, error) {
 	argUse := make([]bool, len(args))
 	buf := &bytes.Buffer{}
 
@@ -29,6 +35,11 @@ func (q *Query) Sanitize(args ...interface{}) (string, error) {
 			str = part
 		case int:
 			argIdx := part - 1
+
+			if argIdx < 0 {
+				return "", fmt.Errorf("first sql argument must be > 0")
+			}
+
 			if argIdx >= len(args) {
 				return "", fmt.Errorf("insufficient arguments")
 			}
@@ -138,11 +149,13 @@ func rawState(l *sqlLexer) stateFn {
 				return multilineCommentState
 			}
 		case utf8.RuneError:
-			if l.pos-l.start > 0 {
-				l.parts = append(l.parts, l.src[l.start:l.pos])
-				l.start = l.pos
+			if width != replacementcharacterwidth {
+				if l.pos-l.start > 0 {
+					l.parts = append(l.parts, l.src[l.start:l.pos])
+					l.start = l.pos
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 }
@@ -160,11 +173,13 @@ func singleQuoteState(l *sqlLexer) stateFn {
 			}
 			l.pos += width
 		case utf8.RuneError:
-			if l.pos-l.start > 0 {
-				l.parts = append(l.parts, l.src[l.start:l.pos])
-				l.start = l.pos
+			if width != replacementcharacterwidth {
+				if l.pos-l.start > 0 {
+					l.parts = append(l.parts, l.src[l.start:l.pos])
+					l.start = l.pos
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 }
@@ -182,11 +197,13 @@ func doubleQuoteState(l *sqlLexer) stateFn {
 			}
 			l.pos += width
 		case utf8.RuneError:
-			if l.pos-l.start > 0 {
-				l.parts = append(l.parts, l.src[l.start:l.pos])
-				l.start = l.pos
+			if width != replacementcharacterwidth {
+				if l.pos-l.start > 0 {
+					l.parts = append(l.parts, l.src[l.start:l.pos])
+					l.start = l.pos
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 }
@@ -228,11 +245,13 @@ func escapeStringState(l *sqlLexer) stateFn {
 			}
 			l.pos += width
 		case utf8.RuneError:
-			if l.pos-l.start > 0 {
-				l.parts = append(l.parts, l.src[l.start:l.pos])
-				l.start = l.pos
+			if width != replacementcharacterwidth {
+				if l.pos-l.start > 0 {
+					l.parts = append(l.parts, l.src[l.start:l.pos])
+					l.start = l.pos
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 }
@@ -249,11 +268,13 @@ func oneLineCommentState(l *sqlLexer) stateFn {
 		case '\n', '\r':
 			return rawState
 		case utf8.RuneError:
-			if l.pos-l.start > 0 {
-				l.parts = append(l.parts, l.src[l.start:l.pos])
-				l.start = l.pos
+			if width != replacementcharacterwidth {
+				if l.pos-l.start > 0 {
+					l.parts = append(l.parts, l.src[l.start:l.pos])
+					l.start = l.pos
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 }
@@ -283,11 +304,13 @@ func multilineCommentState(l *sqlLexer) stateFn {
 			l.nested--
 
 		case utf8.RuneError:
-			if l.pos-l.start > 0 {
-				l.parts = append(l.parts, l.src[l.start:l.pos])
-				l.start = l.pos
+			if width != replacementcharacterwidth {
+				if l.pos-l.start > 0 {
+					l.parts = append(l.parts, l.src[l.start:l.pos])
+					l.start = l.pos
+				}
+				return nil
 			}
-			return nil
 		}
 	}
 }
@@ -295,7 +318,7 @@ func multilineCommentState(l *sqlLexer) stateFn {
 // SanitizeSQL replaces placeholder values with args. It quotes and escapes args
 // as necessary. This function is only safe when standard_conforming_strings is
 // on.
-func SanitizeSQL(sql string, args ...interface{}) (string, error) {
+func SanitizeSQL(sql string, args ...any) (string, error) {
 	query, err := NewQuery(sql)
 	if err != nil {
 		return "", err

@@ -5,20 +5,19 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"time"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgio"
+	"github.com/yugabyte/pgx/v5/internal/pgio"
+	"github.com/yugabyte/pgx/v5/pgconn"
 )
 
 // CopyFromRows returns a CopyFromSource interface over the provided rows slice
 // making it usable by *Conn.CopyFrom.
-func CopyFromRows(rows [][]interface{}) CopyFromSource {
+func CopyFromRows(rows [][]any) CopyFromSource {
 	return &copyFromRows{rows: rows, idx: -1}
 }
 
 type copyFromRows struct {
-	rows [][]interface{}
+	rows [][]any
 	idx  int
 }
 
@@ -27,7 +26,7 @@ func (ctr *copyFromRows) Next() bool {
 	return ctr.idx < len(ctr.rows)
 }
 
-func (ctr *copyFromRows) Values() ([]interface{}, error) {
+func (ctr *copyFromRows) Values() ([]any, error) {
 	return ctr.rows[ctr.idx], nil
 }
 
@@ -37,12 +36,12 @@ func (ctr *copyFromRows) Err() error {
 
 // CopyFromSlice returns a CopyFromSource interface over a dynamic func
 // making it usable by *Conn.CopyFrom.
-func CopyFromSlice(length int, next func(int) ([]interface{}, error)) CopyFromSource {
+func CopyFromSlice(length int, next func(int) ([]any, error)) CopyFromSource {
 	return &copyFromSlice{next: next, idx: -1, len: length}
 }
 
 type copyFromSlice struct {
-	next func(int) ([]interface{}, error)
+	next func(int) ([]any, error)
 	idx  int
 	len  int
 	err  error
@@ -53,7 +52,7 @@ func (cts *copyFromSlice) Next() bool {
 	return cts.idx < cts.len
 }
 
-func (cts *copyFromSlice) Values() ([]interface{}, error) {
+func (cts *copyFromSlice) Values() ([]any, error) {
 	values, err := cts.next(cts.idx)
 	if err != nil {
 		cts.err = err
@@ -65,6 +64,33 @@ func (cts *copyFromSlice) Err() error {
 	return cts.err
 }
 
+// CopyFromFunc returns a CopyFromSource interface that relies on nxtf for values.
+// nxtf returns rows until it either signals an 'end of data' by returning row=nil and err=nil,
+// or it returns an error. If nxtf returns an error, the copy is aborted.
+func CopyFromFunc(nxtf func() (row []any, err error)) CopyFromSource {
+	return &copyFromFunc{next: nxtf}
+}
+
+type copyFromFunc struct {
+	next     func() ([]any, error)
+	valueRow []any
+	err      error
+}
+
+func (g *copyFromFunc) Next() bool {
+	g.valueRow, g.err = g.next()
+	// only return true if valueRow exists and no error
+	return g.valueRow != nil && g.err == nil
+}
+
+func (g *copyFromFunc) Values() ([]any, error) {
+	return g.valueRow, g.err
+}
+
+func (g *copyFromFunc) Err() error {
+	return g.err
+}
+
 // CopyFromSource is the interface used by *Conn.CopyFrom as the source for copy data.
 type CopyFromSource interface {
 	// Next returns true if there is another row and makes the next row data
@@ -73,7 +99,7 @@ type CopyFromSource interface {
 	Next() bool
 
 	// Values returns the values for the current row.
-	Values() ([]interface{}, error)
+	Values() ([]any, error)
 
 	// Err returns any error that has been encountered by the CopyFromSource. If
 	// this is not nil *Conn.CopyFrom will abort the copy.
@@ -86,9 +112,17 @@ type copyFrom struct {
 	columnNames   []string
 	rowSrc        CopyFromSource
 	readerErrChan chan error
+	mode          QueryExecMode
 }
 
 func (ct *copyFrom) run(ctx context.Context) (int64, error) {
+	if ct.conn.copyFromTracer != nil {
+		ctx = ct.conn.copyFromTracer.TraceCopyFromStart(ctx, ct.conn, TraceCopyFromStartData{
+			TableName:   ct.tableName,
+			ColumnNames: ct.columnNames,
+		})
+	}
+
 	quotedTableName := ct.tableName.Sanitize()
 	cbuf := &bytes.Buffer{}
 	for i, cn := range ct.columnNames {
@@ -99,9 +133,29 @@ func (ct *copyFrom) run(ctx context.Context) (int64, error) {
 	}
 	quotedColumnNames := cbuf.String()
 
-	sd, err := ct.conn.Prepare(ctx, "", fmt.Sprintf("select %s from %s", quotedColumnNames, quotedTableName))
-	if err != nil {
-		return 0, err
+	var sd *pgconn.StatementDescription
+	switch ct.mode {
+	case QueryExecModeExec, QueryExecModeSimpleProtocol:
+		// These modes don't support the binary format. Before the inclusion of the
+		// QueryExecModes, Conn.Prepare was called on every COPY operation to get
+		// the OIDs. These prepared statements were not cached.
+		//
+		// Since that's the same behavior provided by QueryExecModeDescribeExec,
+		// we'll default to that mode.
+		ct.mode = QueryExecModeDescribeExec
+		fallthrough
+	case QueryExecModeCacheStatement, QueryExecModeCacheDescribe, QueryExecModeDescribeExec:
+		var err error
+		sd, err = ct.conn.getStatementDescription(
+			ctx,
+			ct.mode,
+			fmt.Sprintf("select %s from %s", quotedColumnNames, quotedTableName),
+		)
+		if err != nil {
+			return 0, fmt.Errorf("statement description failed: %w", err)
+		}
+	default:
+		return 0, fmt.Errorf("unknown QueryExecMode: %v", ct.mode)
 	}
 
 	r, w := io.Pipe()
@@ -145,29 +199,29 @@ func (ct *copyFrom) run(ctx context.Context) (int64, error) {
 		w.Close()
 	}()
 
-	startTime := time.Now()
-
 	commandTag, err := ct.conn.pgConn.CopyFrom(ctx, r, fmt.Sprintf("copy %s ( %s ) from stdin binary;", quotedTableName, quotedColumnNames))
 
 	r.Close()
 	<-doneChan
 
-	rowsAffected := commandTag.RowsAffected()
-	if err == nil {
-		if ct.conn.shouldLog(LogLevelInfo) {
-			endTime := time.Now()
-			ct.conn.log(ctx, LogLevelInfo, "CopyFrom", map[string]interface{}{"tableName": ct.tableName, "columnNames": ct.columnNames, "time": endTime.Sub(startTime), "rowCount": rowsAffected})
-		}
-	} else if ct.conn.shouldLog(LogLevelError) {
-		ct.conn.log(ctx, LogLevelError, "CopyFrom", map[string]interface{}{"err": err, "tableName": ct.tableName, "columnNames": ct.columnNames})
+	if ct.conn.copyFromTracer != nil {
+		ct.conn.copyFromTracer.TraceCopyFromEnd(ctx, ct.conn, TraceCopyFromEndData{
+			CommandTag: commandTag,
+			Err:        err,
+		})
 	}
 
-	return rowsAffected, err
+	return commandTag.RowsAffected(), err
 }
 
 func (ct *copyFrom) buildCopyBuf(buf []byte, sd *pgconn.StatementDescription) (bool, []byte, error) {
+	const sendBufSize = 65536 - 5 // The packet has a 5-byte header
+	lastBufLen := 0
+	largestRowLen := 0
 
 	for ct.rowSrc.Next() {
+		lastBufLen = len(buf)
+
 		values, err := ct.rowSrc.Values()
 		if err != nil {
 			return false, nil, err
@@ -178,13 +232,21 @@ func (ct *copyFrom) buildCopyBuf(buf []byte, sd *pgconn.StatementDescription) (b
 
 		buf = pgio.AppendInt16(buf, int16(len(ct.columnNames)))
 		for i, val := range values {
-			buf, err = encodePreparedStatementArgument(ct.conn.connInfo, buf, sd.Fields[i].DataTypeOID, val)
+			buf, err = encodeCopyValue(ct.conn.typeMap, buf, sd.Fields[i].DataTypeOID, val)
 			if err != nil {
 				return false, nil, err
 			}
 		}
 
-		if len(buf) > 65536 {
+		rowLen := len(buf) - lastBufLen
+		if rowLen > largestRowLen {
+			largestRowLen = rowLen
+		}
+
+		// Try not to overflow size of the buffer PgConn.CopyFrom will be reading into. If that happens then the nature of
+		// io.Pipe means that the next Read will be short. This can lead to pathological send sizes such as 65531, 13, 65531
+		// 13, 65531, 13, 65531, 13.
+		if len(buf) > sendBufSize-largestRowLen {
 			return true, buf, nil
 		}
 	}
@@ -192,12 +254,14 @@ func (ct *copyFrom) buildCopyBuf(buf []byte, sd *pgconn.StatementDescription) (b
 	return false, buf, nil
 }
 
-// CopyFrom uses the PostgreSQL copy protocol to perform bulk data insertion.
-// It returns the number of rows copied and an error.
+// CopyFrom uses the PostgreSQL copy protocol to perform bulk data insertion. It returns the number of rows copied and
+// an error.
 //
-// CopyFrom requires all values use the binary format. Almost all types
-// implemented by pgx use the binary format by default. Types implementing
-// Encoder can only be used if they encode to the binary format.
+// CopyFrom requires all values use the binary format. A pgtype.Type that supports the binary format must be registered
+// for the type of each column. Almost all types implemented by pgx support the binary format.
+//
+// Even though enum types appear to be strings they still must be registered to use with CopyFrom. This can be done with
+// Conn.LoadType and pgtype.Map.RegisterType.
 func (c *Conn) CopyFrom(ctx context.Context, tableName Identifier, columnNames []string, rowSrc CopyFromSource) (int64, error) {
 	ct := &copyFrom{
 		conn:          c,
@@ -205,6 +269,7 @@ func (c *Conn) CopyFrom(ctx context.Context, tableName Identifier, columnNames [
 		columnNames:   columnNames,
 		rowSrc:        rowSrc,
 		readerErrChan: make(chan error),
+		mode:          c.config.DefaultQueryExecMode,
 	}
 
 	return ct.run(ctx)

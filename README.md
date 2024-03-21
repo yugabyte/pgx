@@ -73,15 +73,11 @@ Details about the upstream pgx driver - which hold true for this driver as well 
 
 pgx is a pure Go driver and toolkit for PostgreSQL.
 
-pgx aims to be low-level, fast, and performant, while also enabling PostgreSQL-specific features that the standard `database/sql` package does not allow for.
-
-The driver component of pgx can be used alongside the standard `database/sql` package.
+The pgx driver is a low-level, high performance interface. It also includes an adapter for the standard `database/sql` interface.
 
 The toolkit component is a related set of packages that implement PostgreSQL functionality such as parsing the wire protocol
 and type mapping between PostgreSQL and Go. These underlying packages can be used to implement alternative drivers,
 proxies, load balancers, logical replication clients, etc.
-
-The current release of `pgx v4` requires Go modules. To use the previous version, checkout and vendor the `v3` branch.
 
 ## Example Usage
 
@@ -93,7 +89,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/yugabyte/pgx/v4"
+	"github.com/yugabyte/pgx/v5"
 )
 
 func main() {
@@ -119,21 +115,7 @@ func main() {
 
 See the [getting started guide](https://github.com/jackc/pgx/wiki/Getting-started-with-pgx) for more information.
 
-## Choosing Between the pgx and database/sql Interfaces
-
-It is recommended to use the pgx interface if:
-1. The application only targets PostgreSQL.
-2. No other libraries that require `database/sql` are in use.
-
-The pgx interface is faster and exposes more features.
-
-The `database/sql` interface only allows the underlying driver to return or receive the following types: `int64`,
-`float64`, `bool`, `[]byte`, `string`, `time.Time`, or `nil`. Handling other types requires implementing the
-`database/sql.Scanner` and the `database/sql/driver/driver.Valuer` interfaces which require transmission of values in text format. The binary format can be substantially faster, which is what the pgx interface uses.
-
 ## Features
-
-pgx supports many features beyond what is available through `database/sql`:
 
 * Support for approximately 70 different PostgreSQL types
 * Automatic statement preparation and caching
@@ -141,98 +123,53 @@ pgx supports many features beyond what is available through `database/sql`:
 * Single-round trip query mode
 * Full TLS connection control
 * Binary format support for custom types (allows for much quicker encoding/decoding)
-* COPY protocol support for faster bulk data loads
-* Extendable logging support including built-in support for `log15adapter`, [`logrus`](https://github.com/sirupsen/logrus), [`zap`](https://github.com/uber-go/zap), and [`zerolog`](https://github.com/rs/zerolog)
+* `COPY` protocol support for faster bulk data loads
+* Tracing and logging support
 * Connection pool with after-connect hook for arbitrary connection setup
-* Listen / notify
 * Conversion of PostgreSQL arrays to Go slice mappings for integers, floats, and strings
-* Hstore support
-* JSON and JSONB support
-* Maps `inet` and `cidr` PostgreSQL types to `net.IPNet` and `net.IP`
+* `hstore` support
+* `json` and `jsonb` support
+* Maps `inet` and `cidr` PostgreSQL types to `netip.Addr` and `netip.Prefix`
 * Large object support
-* NULL mapping to Null* struct or pointer to pointer
+* NULL mapping to pointer to pointer
 * Supports `database/sql.Scanner` and `database/sql/driver.Valuer` interfaces for custom types
 * Notice response handling
 * Simulated nested transactions with savepoints
 
-## Performance
+## Choosing Between the pgx and database/sql Interfaces
 
-There are three areas in particular where pgx can provide a significant performance advantage over the standard
-`database/sql` interface and other drivers:
+The pgx interface is faster.
 
-1. PostgreSQL specific types - Types such as arrays can be parsed much quicker because pgx uses the binary format.
-2. Automatic statement preparation and caching - pgx will prepare and cache statements by default. This can provide an
-   significant free improvement to code that does not explicitly use prepared statements. Under certain workloads, it can
-   perform nearly 3x the number of queries per second.
-3. Batched queries - Multiple queries can be batched together to minimize network round trips.
+The pgx interface is recommended when:
+
+1. The application only targets PostgreSQL.
+2. No other libraries that require `database/sql` are in use.
+
+It is also possible to use the `database/sql` interface and convert a connection to the lower-level pgx interface as needed.
 
 ## Testing
 
-pgx tests naturally require a PostgreSQL database. It will connect to the database specified in the `PGX_TEST_DATABASE` environment
-variable. The `PGX_TEST_DATABASE` environment variable can either be a URL or DSN. In addition, the standard `PG*` environment
-variables will be respected. Consider using [direnv](https://github.com/direnv/direnv) to simplify environment variable
-handling.
+See CONTRIBUTING.md for setup instructions.
 
-### Example Test Environment
+## Architecture
 
-Connect to your PostgreSQL server and run:
-
-```
-create database pgx_test;
-```
-
-Connect to the newly-created database and run:
-
-```
-create domain uint64 as numeric(20,0);
-```
-
-Now, you can run the tests:
-
-```
-PGX_TEST_DATABASE="host=/var/run/postgresql database=pgx_test" go test ./...
-```
-
-In addition, there are tests specific for PgBouncer that will be executed if `PGX_TEST_PGBOUNCER_CONN_STRING` is set.
+See the presentation at Golang Estonia, [PGX Top to Bottom](https://www.youtube.com/watch?v=sXMSWhcHCf8) for a description of pgx architecture.
 
 ## Supported Go and PostgreSQL Versions
 
-pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.16 and higher and PostgreSQL 10 and higher.
+pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.20 and higher and PostgreSQL 12 and higher. pgx also is tested against the latest version of [CockroachDB](https://www.cockroachlabs.com/product/).
 
 ## Version Policy
 
-pgx follows semantic versioning for the documented public API on stable releases. `v4` is the latest stable major version.
+pgx follows semantic versioning for the documented public API on stable releases. `v5` is the latest stable major version.
 
 ## PGX Family Libraries
-
-pgx is the head of a family of PostgreSQL libraries. Many of these can be used independently. Many can also be accessed
-from pgx for lower-level control.
-
-### [github.com/jackc/pgconn](https://github.com/jackc/pgconn)
-
-`pgconn` is a lower-level PostgreSQL database driver that operates at nearly the same level as the C library `libpq`.
-
-### [github.com/yugabyte/pgx/v4/pgxpool](https://github.com/yugabyte/pgx/tree/master/pgxpool)
-
-`pgxpool` is a connection pool for pgx. pgx is entirely decoupled from its default pool implementation. This means that pgx can be used with a different pool or without any pool at all.
-
-### [github.com/yugabyte/pgx/v4/stdlib](https://github.com/yugabyte/pgx/tree/master/stdlib)
-
-This is a `database/sql` compatibility layer for pgx. pgx can be used as a normal `database/sql` driver, but at any time, the native interface can be acquired for more performance or PostgreSQL specific functionality.
-
-### [github.com/jackc/pgtype](https://github.com/jackc/pgtype)
-
-Over 70 PostgreSQL types are supported including `uuid`, `hstore`, `json`, `bytea`, `numeric`, `interval`, `inet`, and arrays. These types support `database/sql` interfaces and are usable outside of pgx. They are fully tested in pgx and pq. They also support a higher performance interface when used with the pgx driver.
-
-### [github.com/jackc/pgproto3](https://github.com/jackc/pgproto3)
-
-pgproto3 provides standalone encoding and decoding of the PostgreSQL v3 wire protocol. This is useful for implementing very low level PostgreSQL tooling.
 
 ### [github.com/jackc/pglogrepl](https://github.com/jackc/pglogrepl)
 
 pglogrepl provides functionality to act as a client for PostgreSQL logical replication.
 
-### [github.com/jackc/pgmock](https://github.com/jackc/pgmock)
+pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.16 and higher and PostgreSQL 10 and higher.
 
 pgmock offers the ability to create a server that mocks the PostgreSQL wire protocol. This is used internally to test pgx by purposely inducing unusual errors. pgproto3 and pgmock together provide most of the foundational tooling required to implement a PostgreSQL proxy or MitM (such as for a custom connection pooler).
 
@@ -244,8 +181,56 @@ tern is a stand-alone SQL migration system.
 
 pgerrcode contains constants for the PostgreSQL error codes.
 
+## Adapters for 3rd Party Types
+
+### [github.com/yugabyte/pgx/v4/pgxpool](https://github.com/yugabyte/pgx/tree/master/pgxpool)
+
+
+### [github.com/yugabyte/pgx/v4/stdlib](https://github.com/yugabyte/pgx/tree/master/stdlib)
+
+* [https://github.com/jackhopner/pgx-xray-tracer](https://github.com/jackhopner/pgx-xray-tracer)
+
+## Adapters for 3rd Party Loggers
+
+These adapters can be used with the tracelog package.
+
+* [github.com/jackc/pgx-go-kit-log](https://github.com/jackc/pgx-go-kit-log)
+* [github.com/jackc/pgx-log15](https://github.com/jackc/pgx-log15)
+* [github.com/jackc/pgx-logrus](https://github.com/jackc/pgx-logrus)
+* [github.com/jackc/pgx-zap](https://github.com/jackc/pgx-zap)
+* [github.com/jackc/pgx-zerolog](https://github.com/jackc/pgx-zerolog)
+* [github.com/mcosta74/pgx-slog](https://github.com/mcosta74/pgx-slog)
+* [github.com/kataras/pgx-golog](https://github.com/kataras/pgx-golog)
+
 ## 3rd Party Libraries with PGX Support
+
+### [github.com/pashagolub/pgxmock](https://github.com/pashagolub/pgxmock)
+
+pgxmock is a mock library implementing pgx interfaces.
+pgxmock has one and only purpose - to simulate pgx behavior in tests, without needing a real database connection.
 
 ### [github.com/georgysavva/scany](https://github.com/georgysavva/scany)
 
 Library for scanning data from a database into Go structs and more.
+
+### [github.com/vingarcia/ksql](https://github.com/vingarcia/ksql)
+
+A carefully designed SQL client for making using SQL easier,
+more productive, and less error-prone on Golang.
+
+### [https://github.com/otan/gopgkrb5](https://github.com/otan/gopgkrb5)
+
+Adds GSSAPI / Kerberos authentication support.
+
+### [github.com/wcamarao/pmx](https://github.com/wcamarao/pmx)
+
+Explicit data mapping and scanning library for Go structs and slices.
+
+### [github.com/stephenafamo/scan](https://github.com/stephenafamo/scan)
+
+Type safe and flexible package for scanning database data into Go types.
+Supports, structs, maps, slices and custom mapping functions.
+
+### [https://github.com/z0ne-dev/mgx](https://github.com/z0ne-dev/mgx)
+
+Code first migration library for native pgx (no database/sql abstraction).
