@@ -125,9 +125,9 @@ func replaceHostString(connString string, newHost string, port uint16) string {
 			newConnString = pattern.ReplaceAllString(connString, fmt.Sprintf("://%s:%d/", newHost, port))
 		}
 	} else { // key = value (DSN style)
-		pattern := regexp.MustCompile("host=([^/]*) ")
+		pattern := regexp.MustCompile("host=([^ ]*) ")
 		newConnString = pattern.ReplaceAllString(connString, fmt.Sprintf("host=%s ", newHost))
-		pattern = regexp.MustCompile("port=([^/]*) ")
+		pattern = regexp.MustCompile("port=([^ ]*) ")
 		newConnString = pattern.ReplaceAllString(newConnString, fmt.Sprintf("port=%d ", port))
 	}
 	return newConnString
