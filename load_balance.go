@@ -222,6 +222,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		newConfig.Port = lbHost.port
 		newConfig.controlHost = config.controlHost
 		newConfig.TLSConfig = config.TLSConfig
+		newConfig.DialFunc = config.DialFunc
 		return connectWithRetries(ctx, config.controlHost, newConfig, newLoadInfo, lbHost)
 	}
 }
@@ -252,6 +253,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		} else {
 			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
 			oldTLSConfig := newConfig.TLSConfig
+			oldDialFunc := newConfig.DialFunc
 			newConfig, err = ParseConfig(newConnString)
 			if err != nil {
 				return nil, err
@@ -259,6 +261,7 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 			newConfig.Port = lbHost.port
 			newConfig.controlHost = controlHost
 			newConfig.TLSConfig = oldTLSConfig
+			newConfig.DialFunc = oldDialFunc
 			conn, err = connect(ctx, newConfig)
 		}
 	}
