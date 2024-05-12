@@ -13,7 +13,6 @@ import (
 type Conn struct {
 	res *puddle.Resource[*connResource]
 	p   *Pool
-	ctx context.Context
 }
 
 // Release returns c to the pool it was acquired from. Once Release has been called, other methods must not be called.
@@ -28,10 +27,14 @@ func (c *Conn) Release() {
 	c.res = nil
 
 	if c.p.releaseTracer != nil {
+<<<<<<< HEAD
 		ctx := c.p.releaseTracer.TraceReleaseStart(c.ctx, c.p, TraceReleaseStartData{Conn: conn})
 		defer func() {
 			c.p.releaseTracer.TraceReleaseEnd(ctx, c.p, TraceReleaseEndData{})
 		}()
+=======
+		c.p.releaseTracer.TraceRelease(c.p, TraceReleaseData{Conn: conn})
+>>>>>>> 169067a3 (remove ctx from release tracer)
 	}
 
 	if conn.IsClosed() || conn.PgConn().IsBusy() || conn.PgConn().TxStatus() != 'I' {
