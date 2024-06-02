@@ -400,7 +400,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 }
 
 func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
-	leastCnt := int(math.MaxInt64)
+	leastCnt := int(math.MaxInt32)
 	leastLoaded := ""
 	leastLoadedservers := make([]string, 0)
 	if li.config.topologyKeys != nil {
@@ -424,12 +424,12 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 					}
 				}
 			}
-			if leastCnt != int(math.MaxInt64) && len(leastLoadedservers) != 0 {
+			if leastCnt != int(math.MaxInt32) && len(leastLoadedservers) != 0 {
 				break
 			}
 		}
 	}
-	if leastCnt == int(math.MaxInt64) && len(leastLoadedservers) == 0 {
+	if leastCnt == int(math.MaxInt32) && len(leastLoadedservers) == 0 {
 		if li.config.topologyKeys == nil || !li.config.fallbackToTopologyKeysOnly {
 			for h := range li.hostLoad {
 				if !isHostAway(li, h) {
