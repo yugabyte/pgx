@@ -44,7 +44,7 @@ type ConnConfig struct {
 
 	createdByParseConfig bool // Used to enforce created by ParseConfig rule.
 
-	loadBalance                  bool
+	loadBalance                  string
 	topologyKeys                 map[int][]string
 	refreshInterval              int64
 	fallbackToTopologyKeysOnly   bool
@@ -127,13 +127,8 @@ func Connect(ctx context.Context, connString string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if connConfig.loadBalance {
-		conn, err := connectLoadBalanced(ctx, connConfig)
-		if err != ErrFallbackToOriginalBehaviour {
-			return conn, err
-		} else {
-			return connect(ctx, connConfig)
-		}
+	if connConfig.loadBalance != "false" {
+		return connectLoadBalanced(ctx, connConfig)
 	} else {
 		return connect(ctx, connConfig)
 	}
@@ -156,7 +151,7 @@ func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 	// connections with the same config. See https://github.com/jackc/pgx/issues/618.
 	connConfig = connConfig.Copy()
 
-	if connConfig.loadBalance {
+	if connConfig.loadBalance != "false" {
 		return connectLoadBalanced(ctx, connConfig)
 	} else {
 		return connect(ctx, connConfig)
@@ -210,13 +205,13 @@ func ParseConfigWithOptions(connString string, options ParseConfigOptions) (*Con
 		}
 	}
 
-	loadBalance := false
+	var loadBalance string = "false"
 	if s, ok := config.RuntimeParams["load_balance"]; ok {
 		delete(config.RuntimeParams, "load_balance")
-		if b, err := strconv.ParseBool(s); err == nil {
-			loadBalance = b
+		if validateLoadBalnce(s) {
+			loadBalance = s
 		} else {
-			return nil, fmt.Errorf("invalid load_balance: %v", err)
+			return nil, fmt.Errorf("invalid load_balance value: Valid values are only-rr, only-primary, prefer-rr, prefer-primary, any or true")
 		}
 	}
 
@@ -380,7 +375,7 @@ func connect(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 // connection.
 func (c *Conn) Close(ctx context.Context) error {
 	if c.IsClosed() {
-		if !c.closeCntUpdated && c.config.loadBalance {
+		if !c.closeCntUpdated && c.config.loadBalance != "false" {
 			c.closeCntUpdated = true
 			decrementConnCount(c.config.controlHost + "," + c.config.Host)
 		}
@@ -389,7 +384,7 @@ func (c *Conn) Close(ctx context.Context) error {
 
 	err := c.pgConn.Close(ctx)
 
-	if !c.closeCntUpdated && c.config.loadBalance {
+	if !c.closeCntUpdated && c.config.loadBalance != "false" {
 		c.closeCntUpdated = true
 		decrementConnCount(c.config.controlHost + "," + c.config.Host)
 	}
