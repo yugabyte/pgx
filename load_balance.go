@@ -23,7 +23,7 @@ const MAX_INTERVAL_SECONDS = 600
 const MAX_PREFERENCE_VALUE = 10
 const CONTROL_CONN_TIMEOUT = 15 * time.Second
 
-var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
+var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true")
 
 // -- Values for ClusterLoadInfo.flags --
 // Use private address (host) of tservers to create a connection
@@ -156,16 +156,14 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 				if ok {
 					cnt, found := cli.hostLoadPrimary[names[1]]
 					if found {
-						if cnt == 0 {
-							log.Printf("connection count for %s going negative!", names[1])
+						if cnt != 0 {
+							cli.hostLoadPrimary[names[1]] = cnt - 1
 						}
-						cli.hostLoadPrimary[names[1]] = cnt - 1
 					} else {
 						cnt = cli.hostLoadRR[names[1]]
-						if cnt == 0 {
-							log.Printf("connection count for %s going negative!", names[1])
+						if cnt != 0 {
+							cli.hostLoadRR[names[1]] = cnt - 1
 						}
-						cli.hostLoadRR[names[1]] = cnt - 1
 					}
 				}
 			}
@@ -449,7 +447,6 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	leastLoadedservers := make([]string, 0)
 	zonelist := make(map[string][]string)
 	hostload := make(map[string]int)
-	fmt.Println(li.config.loadBalance)
 	if li.config.loadBalance == "only-rr" || li.config.loadBalance == "prefer-rr" {
 		maps.Copy(zonelist, li.zoneListRR)
 		maps.Copy(hostload, li.hostLoadRR)
@@ -535,7 +532,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 								leastLoadedservers = nil
 								leastLoadedservers = append(leastLoadedservers, h)
 								leastCnt = li.hostLoadPrimary[h]
-							} else if hostload[h] == leastCnt {
+							} else if li.hostLoadPrimary[h] == leastCnt {
 								leastLoadedservers = append(leastLoadedservers, h)
 							}
 						}
@@ -547,7 +544,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 								leastLoadedservers = nil
 								leastLoadedservers = append(leastLoadedservers, h)
 								leastCnt = li.hostLoadRR[h]
-							} else if hostload[h] == leastCnt {
+							} else if li.hostLoadRR[h] == leastCnt {
 								leastLoadedservers = append(leastLoadedservers, h)
 							}
 						}
