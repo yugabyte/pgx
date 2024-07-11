@@ -159,8 +159,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 						if cnt != 0 {
 							cli.hostLoadPrimary[names[1]] = cnt - 1
 						}
-					} else {
-						cnt = cli.hostLoadRR[names[1]]
+					} else if cnt, found = cli.hostLoadRR[names[1]]; found {
 						if cnt != 0 {
 							cli.hostLoadRR[names[1]] = cnt - 1
 						}
@@ -432,7 +431,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			log.Printf("Removing %s from unavailableHosts Map", uh)
 			if _, found := li.hostLoadPrimary[uh]; found {
 				li.hostLoadPrimary[uh] = 0
-			} else {
+			} else if _, found = li.hostLoadRR[uh]; found {
 				li.hostLoadRR[uh] = 0
 			}
 			delete(li.unavailableHosts, uh)
@@ -592,10 +591,20 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		port:     li.hostPort[leastLoaded],
 		err:      nil,
 	}
-	if cnt, found := li.hostLoadPrimary[leastLoadedToUse]; found {
-		li.hostLoadPrimary[leastLoadedToUse] = cnt + 1
+	if leastLoaded == leastLoadedToUse {
+		if cnt, found := li.hostLoadPrimary[leastLoadedToUse]; found {
+			li.hostLoadPrimary[leastLoadedToUse] = cnt + 1
+		} else {
+			li.hostLoadRR[leastLoadedToUse] = leastCnt + 1
+		}
 	} else {
-		li.hostLoadRR[leastLoadedToUse] = leastCnt + 1
+		_, foundpublic := li.hostLoadPrimary[leastLoadedToUse]
+		_, foundprivate := li.hostLoadPrimary[leastLoaded]
+		if foundpublic || foundprivate {
+			li.hostLoadPrimary[leastLoadedToUse] = leastCnt + 1
+		} else {
+			li.hostLoadRR[leastLoadedToUse] = leastCnt + 1
+		}
 	}
 	return lbh
 }
