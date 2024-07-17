@@ -2,12 +2,13 @@ package pgx
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
 	"maps"
 	"math"
-	"math/rand"
+	"math/big"
 	"net"
 	"regexp"
 	"strings"
@@ -554,8 +555,11 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	}
 
 	if len(leastLoadedservers) != 0 {
-		rand.Seed(time.Now().UnixNano())
-		leastLoaded = leastLoadedservers[rand.Intn(len(leastLoadedservers))]
+		randomIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(leastLoadedservers))))
+		if err != nil {
+			log.Fatalf("Could not select a leastloadedserver randomly")
+		}
+		leastLoaded = leastLoadedservers[randomIndex.Int64()]
 	}
 
 	if leastLoaded == "" {
