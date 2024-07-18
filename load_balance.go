@@ -229,15 +229,16 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	if lbHost.hostname == config.Host {
 		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, lbHost)
 	} else {
+		log.Printf("Replacing %s:%d with %s:%d in conn config", config.Host, config.Port, lbHost.hostname, lbHost.port)
 		newConnString := replaceHostString(config.connString, lbHost.hostname, lbHost.port)
 		newConfig, err := ParseConfig(newConnString)
 		if err != nil {
 			return nil, err
 		}
-		newConfig.Port = lbHost.port
-		newConfig.controlHost = config.controlHost
-		newConfig.TLSConfig = config.TLSConfig
-		return connectWithRetries(ctx, config.controlHost, newConfig, newLoadInfo, lbHost)
+		config.Host = newConfig.Host
+		config.Port = newConfig.Port
+		config.Fallbacks = newConfig.Fallbacks
+		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, lbHost)
 	}
 }
 
@@ -265,15 +266,16 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		if lbHost.hostname == newConfig.Host {
 			conn, err = connect(ctx, newConfig)
 		} else {
-			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
-			oldTLSConfig := newConfig.TLSConfig
-			newConfig, err = ParseConfig(newConnString)
-			if err != nil {
-				return nil, err
+			log.Printf("Replacing %s:%d with %s:%d in connection config", newConfig.Host, newConfig.Port, lbHost.hostname, lbHost.port)
+			newConnString := replaceHostString(newConfig.connString, lbHost.hostname, lbHost.port)
+			Config, err1 := ParseConfig(newConnString)
+			if err1 != nil {
+				return nil, err1
 			}
-			newConfig.Port = lbHost.port
+			newConfig.Host = Config.Host
+			newConfig.Port = Config.Port
+			newConfig.Fallbacks = Config.Fallbacks
 			newConfig.controlHost = controlHost
-			newConfig.TLSConfig = oldTLSConfig
 			conn, err = connect(ctx, newConfig)
 		}
 	}
