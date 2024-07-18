@@ -141,7 +141,11 @@ func ConnectWithOptions(ctx context.Context, connString string, options ParseCon
 	if err != nil {
 		return nil, err
 	}
-	return connect(ctx, connConfig)
+	if connConfig.loadBalance != "false" {
+		return connectLoadBalanced(ctx, connConfig)
+	} else {
+		return connect(ctx, connConfig)
+	}
 }
 
 // ConnectConfig establishes a connection with a PostgreSQL server with a configuration struct.
