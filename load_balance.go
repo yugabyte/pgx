@@ -352,13 +352,14 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 				return err
 			}
 		}
+		li.config.controlHost = li.config.Host
 	}
 	// defer li.controlConn.Close(li.ctrlCtx)
 
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
 	if err != nil {
 		log.Printf("Could not query load information: %s", err.Error())
-		markHostAway(li, li.config.Host)
+		markHostAway(li, li.config.controlHost)
 		li.controlConn = nil
 		return refreshLoadInfo(li)
 	}
@@ -378,7 +379,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
 		if err != nil {
 			log.Printf("Could not read load information: %s", err.Error())
-			markHostAway(li, li.config.Host)
+			markHostAway(li, li.config.controlHost)
 			li.controlConn = nil
 			return refreshLoadInfo(li)
 		} else {
@@ -426,7 +427,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	rsError := rows.Err()
 	if rsError != nil {
 		log.Printf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
-		markHostAway(li, li.config.Host)
+		markHostAway(li, li.config.controlHost)
 		li.controlConn = nil
 		return refreshLoadInfo(li)
 	}
