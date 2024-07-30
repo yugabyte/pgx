@@ -238,6 +238,7 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		config.Host = newConfig.Host
 		config.Port = newConfig.Port
 		config.Fallbacks = newConfig.Fallbacks
+		config.connString = newConfig.connString
 		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, lbHost)
 	}
 }
@@ -268,14 +269,15 @@ func connectWithRetries(ctx context.Context, controlHost string, newConfig *Conn
 		} else {
 			log.Printf("Replacing %s:%d with %s:%d in connection config", newConfig.Host, newConfig.Port, lbHost.hostname, lbHost.port)
 			newConnString := replaceHostString(newConfig.connString, lbHost.hostname, lbHost.port)
-			Config, err1 := ParseConfig(newConnString)
+			config, err1 := ParseConfig(newConnString)
 			if err1 != nil {
 				return nil, err1
 			}
-			newConfig.Host = Config.Host
-			newConfig.Port = Config.Port
-			newConfig.Fallbacks = Config.Fallbacks
+			newConfig.Host = config.Host
+			newConfig.Port = config.Port
+			newConfig.Fallbacks = config.Fallbacks
 			newConfig.controlHost = controlHost
+			newConfig.connString = config.connString
 			conn, err = connect(ctx, newConfig)
 		}
 	}
@@ -312,8 +314,10 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			log.Printf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
 			return err
 		}
-		li.config = ctrlConfig
-		li.config.Host = LookupIP(li.config.Host)
+		li.config.Host = LookupIP(ctrlConfig.Host)
+		li.config.Port = ctrlConfig.Port
+		li.config.Fallbacks = ctrlConfig.Fallbacks
+		li.config.connString = ctrlConfig.connString
 		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
@@ -327,7 +331,12 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			}
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
-				if li.config, err = ParseConfig(newConnString); err == nil {
+				if ctrlConfig, err = ParseConfig(newConnString); err == nil {
+					li.config.Host = ctrlConfig.Host
+					li.config.Port = ctrlConfig.Port
+					li.config.Fallbacks = ctrlConfig.Fallbacks
+					li.config.connString = ctrlConfig.connString
+					li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 					li.ctrlCtx, _ = context.WithTimeout(context.Background(), CONTROL_CONN_TIMEOUT)
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
 						log.Printf("Created control connection to host %s", h)
