@@ -227,6 +227,8 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 		return connect(ctx, config) // fallback to original behaviour
 	}
 	if lbHost.hostname == config.Host {
+		config.Fallbacks = config.Fallbacks[:1]
+		config.connString = replaceHostString(config.connString, lbHost.hostname, lbHost.port)
 		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, lbHost)
 	} else {
 		log.Printf("Replacing %s:%d with %s:%d in conn config", config.Host, config.Port, lbHost.hostname, lbHost.port)
