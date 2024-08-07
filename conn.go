@@ -208,7 +208,7 @@ func ParseConfigWithOptions(connString string, options ParseConfigOptions) (*Con
 	var loadBalance string = "false"
 	if s, ok := config.RuntimeParams["load_balance"]; ok {
 		delete(config.RuntimeParams, "load_balance")
-		if validateLoadBalnce(s) {
+		if validateLoadBalance(s) {
 			loadBalance = s
 		} else {
 			return nil, fmt.Errorf("invalid load_balance value: Valid values are only-rr, only-primary, prefer-rr, prefer-primary, any or true")

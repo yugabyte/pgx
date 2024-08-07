@@ -376,7 +376,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			newHostPairs[host] = publicIP
 			tk := cloud + "." + region + "." + zone
 			tk_star := cloud + "." + region // Used for topology_keys of type: cloud.region.*
-			if strings.TrimRight(nodeType, "\n") == "primary" {
+			if nodeType == "primary" {
 				hosts, ok := newZoneListPrimary[tk]
 				if !ok {
 					hosts = make([]string, 0)
@@ -457,10 +457,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		maps.Copy(zonelist, li.zoneListRR)
 		maps.Copy(hostload, li.hostLoadRR)
 		for k, v := range li.zoneListPrimary {
-			hosts, ok := zonelist[k]
-			if !ok {
-				zonelist[k] = v
-			}
+			hosts := zonelist[k]
 			hosts = append(hosts, v...)
 			zonelist[k] = hosts
 		}
@@ -653,8 +650,8 @@ func validateTopologyKeys(s string) ([]string, error) {
 	return tkeys, nil
 }
 
-// expects the toplogykeys in the format 'cloud1.region1.zone1,cloud1.region1.zone2,...'
-func validateLoadBalnce(s string) bool {
+// expects the loadBalance to be one of "true", "false", "only-rr", "only-primary", "prefer-rr", "prefer-primary" and "any"
+func validateLoadBalance(s string) bool {
 	switch s {
 	case
 		"true",
@@ -690,24 +687,22 @@ func GetAZInfo() map[string]map[string][]string {
 	az := make(map[string]map[string][]string)
 	for n, cli := range clustersLoadInfo {
 		az[n] = make(map[string][]string)
-		for z, hosts := range cli.zoneListPrimary {
-			q := strings.Split(z, ".")
-			if len(q) == 3 {
-				newzl := make([]string, len(hosts))
-				copy(newzl, hosts)
-				az[n][z] = newzl
-			}
-		}
-		for z, hosts := range cli.zoneListRR {
-			q := strings.Split(z, ".")
-			if len(q) == 3 {
-				newzl := make([]string, len(hosts))
-				copy(newzl, hosts)
-				az[n][z] = newzl
-			}
-		}
+		copyZoneList(az[n], cli.zoneListPrimary)
+		copyZoneList(az[n], cli.zoneListRR)
 	}
 	return az
+}
+
+func copyZoneList(azn map[string][]string, zl map[string][]string) {
+	for z, hosts := range zl {
+		q := strings.Split(z, ".")
+		if len(q) == 3 {
+			newzl := make([]string, len(hosts))
+			copy(newzl, hosts)
+			azn[z] = newzl
+		}
+	}
+
 }
 
 // For test purpose
