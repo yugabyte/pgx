@@ -377,38 +377,13 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			tk := cloud + "." + region + "." + zone
 			tk_star := cloud + "." + region // Used for topology_keys of type: cloud.region.*
 			if nodeType == "primary" {
-				hosts, ok := newZoneListPrimary[tk]
-				if !ok {
-					hosts = make([]string, 0)
-				}
-				hosts_star, ok_star := newZoneListPrimary[tk_star]
-				if !ok_star {
-					hosts_star = make([]string, 0)
-				}
-				hosts = append(hosts, host)
-				hosts_star = append(hosts_star, host)
-				newZoneListPrimary[tk] = hosts
-				newZoneListPrimary[tk_star] = hosts_star
-				cnt := li.hostLoadPrimary[host]
-				newHostLoadPrimary[host] = cnt
-				newHostPort[host] = uint16(port)
+				setUpZoneList(newZoneListPrimary, tk, tk_star, host)
+				newHostLoadPrimary[host] = li.hostLoadPrimary[host]
 			} else {
-				hosts, ok := newZoneListRR[tk]
-				if !ok {
-					hosts = make([]string, 0)
-				}
-				hosts_star, ok_star := newZoneListRR[tk_star]
-				if !ok_star {
-					hosts_star = make([]string, 0)
-				}
-				hosts = append(hosts, host)
-				hosts_star = append(hosts_star, host)
-				newZoneListRR[tk] = hosts
-				newZoneListRR[tk_star] = hosts_star
-				cnt := li.hostLoadRR[host]
-				newHostLoadRR[host] = cnt
-				newHostPort[host] = uint16(port)
+				setUpZoneList(newZoneListRR, tk, tk_star, host)
+				newHostLoadRR[host] = li.hostLoadRR[host]
 			}
+			newHostPort[host] = uint16(port)
 		}
 	}
 
@@ -439,6 +414,21 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		}
 	}
 	return nil
+}
+
+func setUpZoneList(zoneList map[string][]string, tk string, tk_star string, host string) {
+	hosts, ok := zoneList[tk]
+	if !ok {
+		hosts = make([]string, 0)
+	}
+	hosts_star, ok_star := zoneList[tk_star]
+	if !ok_star {
+		hosts_star = make([]string, 0)
+	}
+	hosts = append(hosts, host)
+	hosts_star = append(hosts_star, host)
+	zoneList[tk] = hosts
+	zoneList[tk_star] = hosts_star
 }
 
 func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
@@ -492,17 +482,7 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	if leastCnt == int(math.MaxInt32) && len(leastLoadedservers) == 0 {
 		if !(li.config.loadBalance == "prefer-primary" || li.config.loadBalance == "prefer-rr") {
 			if li.config.topologyKeys == nil || !li.config.fallbackToTopologyKeysOnly {
-				for h := range hostload {
-					if !isHostAway(li, h) {
-						if hostload[h] < leastCnt {
-							leastLoadedservers = nil
-							leastLoadedservers = append(leastLoadedservers, h)
-							leastCnt = hostload[h]
-						} else if hostload[h] == leastCnt {
-							leastLoadedservers = append(leastLoadedservers, h)
-						}
-					}
-				}
+				leastCnt, leastLoadedservers = getHosts(li, hostload)
 			} else {
 				lbh := &lbHost{
 					err: ErrFallbackToOriginalBehaviour,
@@ -510,42 +490,12 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				return lbh
 			}
 		} else {
-			for h := range hostload {
-				if !isHostAway(li, h) {
-					if hostload[h] < leastCnt {
-						leastLoadedservers = nil
-						leastLoadedservers = append(leastLoadedservers, h)
-						leastCnt = hostload[h]
-					} else if hostload[h] == leastCnt {
-						leastLoadedservers = append(leastLoadedservers, h)
-					}
-				}
-			}
+			leastCnt, leastLoadedservers = getHosts(li, hostload)
 			if leastCnt == int(math.MaxInt32) && len(leastLoadedservers) == 0 {
 				if li.config.loadBalance == "prefer-rr" {
-					for h := range li.hostLoadPrimary {
-						if !isHostAway(li, h) {
-							if li.hostLoadPrimary[h] < leastCnt {
-								leastLoadedservers = nil
-								leastLoadedservers = append(leastLoadedservers, h)
-								leastCnt = li.hostLoadPrimary[h]
-							} else if li.hostLoadPrimary[h] == leastCnt {
-								leastLoadedservers = append(leastLoadedservers, h)
-							}
-						}
-					}
+					leastCnt, leastLoadedservers = getHosts(li, li.hostLoadPrimary)
 				} else {
-					for h := range li.hostLoadRR {
-						if !isHostAway(li, h) {
-							if li.hostLoadRR[h] < leastCnt {
-								leastLoadedservers = nil
-								leastLoadedservers = append(leastLoadedservers, h)
-								leastCnt = li.hostLoadRR[h]
-							} else if li.hostLoadRR[h] == leastCnt {
-								leastLoadedservers = append(leastLoadedservers, h)
-							}
-						}
-					}
+					leastCnt, leastLoadedservers = getHosts(li, li.hostLoadRR)
 				}
 			}
 		}
@@ -608,6 +558,23 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		}
 	}
 	return lbh
+}
+
+func getHosts(li *ClusterLoadInfo, hostLoad map[string]int) (int, []string) {
+	leastCnt := int(math.MaxInt32)
+	leastLoadedservers := make([]string, 0)
+	for h := range hostLoad {
+		if !isHostAway(li, h) {
+			if hostLoad[h] < leastCnt {
+				leastLoadedservers = nil
+				leastLoadedservers = append(leastLoadedservers, h)
+				leastCnt = hostLoad[h]
+			} else if hostLoad[h] == leastCnt {
+				leastLoadedservers = append(leastLoadedservers, h)
+			}
+		}
+	}
+	return leastCnt, leastLoadedservers
 }
 
 func isHostAway(li *ClusterLoadInfo, h string) bool {
