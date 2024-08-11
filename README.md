@@ -78,11 +78,12 @@ The driver marks a server as failed with a timestamp, when it cannot connect to 
 PGX smart driver also supports Primary clusters which have associated Read Replica cluster.
 
 The connection property `load-balance` allows five values using which users can distribute connections among different combination of nodes as per their requirements:
-`only-rr` - Create connections only on Read Replica nodes
-`only-primary` - Create connections only on primary cluster nodes
-`prefer-rr` - Create connections on Read Replica nodes. If none available, on any node in the cluster including primary cluster nodes
-`prefer-primary` - Create connections on primary cluster nodes. If none available, on any node in the cluster including Read Replica nodes
-`any` or `true` - Equivalent to value true. Create connections on any node in the primary or Read Replica cluster
+
+- `only-rr` - Create connections only on Read Replica nodes
+- `only-primary` - Create connections only on primary cluster nodes
+- `prefer-rr` - Create connections on Read Replica nodes. If none available, on any node in the cluster including primary cluster nodes
+- `prefer-primary` - Create connections on primary cluster nodes. If none available, on any node in the cluster including Read Replica nodes
+- `any` or `true` - Equivalent to value true. Create connections on any node in the primary or Read Replica cluster
 
 default value is false
 
