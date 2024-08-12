@@ -13,7 +13,7 @@ In the cluster-aware connection load balancing, connections are distributed acro
 To enable the cluster-aware connection load balancing, provide the parameter `load_balance` with value as either `true` or `any` in the connection url or the connection string (DSN style). [This section](url-todo) explains the different values for `load_balance` parameter.
 
 ```
-"postgres://username:password@localhost:5433/database_name?load_balance=any"
+"postgres://username:password@localhost:5433/database_name?load_balance=true"
 ```
 
 With this parameter specified in the url, the driver will fetch and maintain the list of tservers from the given endpoint (`localhost` in above example) available in the YugabyteDB cluster and distribute the connections equally across them.
@@ -28,10 +28,10 @@ With topology-aware connnection load balancing, users can target tservers in spe
 
 The connections will be distributed equally with the tservers in these zones.
 
-Note that, you would still need to specify `load_balance=any` to enable the topology-aware connection load balancing.
+Note that, you would still need to specify `load_balance` to one of the 5 allowed values to enable the topology-aware connection load balancing.
 
 ```
-"postgres://username:password@localhost:5433/database_name?load_balance=any&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
+"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
 ```
 ### Specifying fallback zones
 
@@ -60,7 +60,7 @@ Users can specify Refresh Time Interval, in seconds. It is the time interval bet
 To specify Refresh Interval, use the parameter `yb_servers_refresh_interval` in the connection url or the connection string.
 
 ```
-"postgres://username:password@localhost:5433/database_name?yb_servers_refresh_interval=X&load_balance=any&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
+"postgres://username:password@localhost:5433/database_name?yb_servers_refresh_interval=X&load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
 ```
 
 Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
