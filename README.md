@@ -10,7 +10,7 @@ Users can use this feature in two configurations.
 
 In the cluster-aware connection load balancing, connections are distributed across all the tservers in the cluster, irrespective of their placements.
 
-To enable the cluster-aware connection load balancing, provide the parameter `load_balance` with value as either `true` or `any` in the connection url or the connection string (DSN style). [This section](url-todo) explains the different values for `load_balance` parameter.
+To enable the cluster-aware connection load balancing, provide the parameter `load_balance` with value as either `true` or `any` in the connection url or the connection string (DSN style). [This section](#read-replica-cluster) explains the different values for `load_balance` parameter.
 
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true"
