@@ -10,7 +10,7 @@ Users can use this feature in two configurations.
 
 In the cluster-aware connection load balancing, connections are distributed across all the tservers in the cluster, irrespective of their placements.
 
-To enable the cluster-aware connection load balancing, provide the parameter `load_balance` set to true or any as `load_balance=any` in the connection url or the connection string (DSN style).
+To enable the cluster-aware connection load balancing, provide the parameter `load_balance` with value as either `true` or `any` in the connection url or the connection string (DSN style). [This section](url-todo) explains the different values for `load_balance` parameter.
 
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=any"
@@ -75,7 +75,7 @@ The driver marks a server as failed with a timestamp, when it cannot connect to 
 
 ## Read Replica Cluster
 
-PGX smart driver also supports Primary clusters which have associated Read Replica cluster.
+PGX smart driver also enables load balancing across nodes in primary clusters which have associated Read Replica cluster.
 
 The connection property `load-balance` allows five values using which users can distribute connections among different combination of nodes as per their requirements:
 
