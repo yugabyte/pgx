@@ -10,7 +10,7 @@ Users can use this feature in two configurations.
 
 In the cluster-aware connection load balancing, connections are distributed across all the tservers in the cluster, irrespective of their placements.
 
-To enable the cluster-aware connection load balancing, provide the parameter `load_balance` set to true as `load_balance=true` in the connection url or the connection string (DSN style).
+To enable the cluster-aware connection load balancing, provide the parameter `load_balance` with value as either `true` or `any` in the connection url or the connection string (DSN style). [This section](#read-replica-cluster) explains the different values for `load_balance` parameter.
 
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true"
@@ -28,7 +28,7 @@ With topology-aware connnection load balancing, users can target tservers in spe
 
 The connections will be distributed equally with the tservers in these zones.
 
-Note that, you would still need to specify `load_balance=true` to enable the topology-aware connection load balancing.
+Note that, you would still need to specify `load_balance` to one of the 5 allowed values to enable the topology-aware connection load balancing.
 
 ```
 "postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1,cloud1.region1.zone2"
@@ -40,13 +40,13 @@ Each placement value can be suffixed with a colon (`:`) followed by a preference
 A preference value of `:1` means it is a primary placement. A preference value of `:2` means it is the first fallback placement and so on.If no preference value is provided, it is considered to be a primary placement (equivalent to one with preference value `:1`). Example given below.
 
 ```
-"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.zone1:1,cloud1.region1.zone2:2";
+"postgres://username:password@localhost:5433/database_name?load_balance=any&topology_keys=cloud1.region1.zone1:1,cloud1.region1.zone2:2";
 ```
 
 You can also use `*` for specifying all the zones in a given region as shown below. This is not allowed for cloud or region values.
 
 ```
-"postgres://username:password@localhost:5433/database_name?load_balance=true&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
+"postgres://username:password@localhost:5433/database_name?load_balance=any&topology_keys=cloud1.region1.*:1,cloud1.region2.*:2";
 ```
 
 The driver attempts to connect to a node in following order: the least loaded node in the 1) primary placement(s), else in the 2) first fallback if specified, else in the 3) second fallback if specified and so on.
@@ -65,7 +65,27 @@ To specify Refresh Interval, use the parameter `yb_servers_refresh_interval` in 
 
 Same parameters can be specified in the connection url while using the `pgxpool.Connect()` API.
 
-For a working example which demonstrates both the configurations of connection load balancing using `pgx.Connect()` and `pgxpool.Connect()`, see the [driver-examples](https://github.com/yugabyte/driver-examples/tree/main/go/pgx) repository.
+## Other Connection Parameters:
+
+### fallback_to_topology_keys_only
+Applicable only for TopologyAware Load Balancing. When set to true, the smart driver does not attempt to connect to servers outside of primary and fallback placements specified via property. The default behaviour is to fallback to any available server in the entire cluster.(default value: false)
+
+### failed_host_reconnect_delay_secs
+The driver marks a server as failed with a timestamp, when it cannot connect to it. Later, whenever it refreshes the server list via yb_servers(), if it sees the failed server in the response, it marks the server as UP only if failed-host-reconnect-delay-secs time has elapsed. (The yb_servers() function does not remove a failed server immediately from its result and retains it for a while.)(default value: 5 seconds)
+
+## Read Replica Cluster
+
+PGX smart driver also enables load balancing across nodes in primary clusters which have associated Read Replica cluster.
+
+The connection property `load-balance` allows five values using which users can distribute connections among different combination of nodes as per their requirements:
+
+- `only-rr` - Create connections only on Read Replica nodes
+- `only-primary` - Create connections only on primary cluster nodes
+- `prefer-rr` - Create connections on Read Replica nodes. If none available, on any node in the cluster including primary cluster nodes
+- `prefer-primary` - Create connections on primary cluster nodes. If none available, on any node in the cluster including Read Replica nodes
+- `any` or `true` - Equivalent to value true. Create connections on any node in the primary or Read Replica cluster
+
+default value is false
 
 Details about the upstream pgx driver - which hold true for this driver as well - are given below.
 
@@ -157,7 +177,7 @@ See the presentation at Golang Estonia, [PGX Top to Bottom](https://www.youtube.
 
 ## Supported Go and PostgreSQL Versions
 
-pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.20 and higher and PostgreSQL 12 and higher. pgx also is tested against the latest version of [CockroachDB](https://www.cockroachlabs.com/product/).
+pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.20 and higher and PostgreSQL 12 and higher.
 
 ## Version Policy
 

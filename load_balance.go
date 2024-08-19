@@ -2,11 +2,13 @@ package pgx
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"math"
-	"math/rand"
+	"math/big"
 	"net"
 	"regexp"
 	"strings"
@@ -22,7 +24,7 @@ const MAX_INTERVAL_SECONDS = 600
 const MAX_PREFERENCE_VALUE = 10
 const CONTROL_CONN_TIMEOUT = 15 * time.Second
 
-var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true so falling back to original behaviour")
+var ErrFallbackToOriginalBehaviour = errors.New("no preferred server available, fallback-to-topology-keys-only is set to true")
 
 // -- Values for ClusterLoadInfo.flags --
 // Use private address (host) of tservers to create a connection
@@ -50,12 +52,16 @@ type ClusterLoadInfo struct {
 	controlConn *Conn
 	ctrlCtx     context.Context
 	lastRefresh time.Time
-	// map of host -> connection count
-	hostLoad map[string]int
+	// map of host in primary cluster -> connection count
+	hostLoadPrimary map[string]int
+	// map of host in read replica cluster -> connection count
+	hostLoadRR map[string]int
 	// map of host -> port
 	hostPort map[string]uint16
-	// map of "cloud.region.zone" -> slice of hostnames
-	zoneList map[string][]string
+	// map of "cloud.region.zone" -> slice of hostnames of primary cluster
+	zoneListPrimary map[string][]string
+	// map of "cloud.region.zone" -> slice of hostnames of read replica custer
+	zoneListRR map[string][]string
 	// map of host -> int
 	unavailableHosts map[string]int64
 	// map of (private -> public) address of a node.
@@ -149,11 +155,16 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			} else {
 				cli, ok := clustersLoadInfo[LookupIP(names[0])]
 				if ok {
-					cnt := cli.hostLoad[names[1]]
-					if cnt == 0 {
-						log.Printf("connection count for %s going negative!", names[1])
+					cnt, found := cli.hostLoadPrimary[names[1]]
+					if found {
+						if cnt != 0 {
+							cli.hostLoadPrimary[names[1]] = cnt - 1
+						}
+					} else if cnt, found = cli.hostLoadRR[names[1]]; found {
+						if cnt != 0 {
+							cli.hostLoadRR[names[1]] = cnt - 1
+						}
 					}
-					cli.hostLoad[names[1]] = cnt - 1
 				}
 			}
 			continue
@@ -197,6 +208,7 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 			old.config.topologyKeys = new.config.topologyKeys // Use the provided topology-keys.
 			old.config.fallbackToTopologyKeysOnly = new.config.fallbackToTopologyKeysOnly
 			old.config.failedHostReconnectDelaySecs = new.config.failedHostReconnectDelaySecs
+			old.config.loadBalance = new.config.loadBalance
 			old.config.connString = new.config.connString
 			out <- refreshAndGetLeastLoadedHost(old, new.unavailableHosts)
 			// continue
@@ -208,6 +220,9 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 	newLoadInfo := NewClusterLoadInfo(ctx, config)
 	requestChan <- newLoadInfo
 	lbHost := <-hostChan
+	if lbHost.err == ErrFallbackToOriginalBehaviour {
+		return nil, lbHost.err
+	}
 	if lbHost.err != nil {
 		return connect(ctx, config) // fallback to original behaviour
 	}
@@ -277,7 +292,8 @@ func decrementConnCount(str string) {
 
 func markHostAway(li *ClusterLoadInfo, h string) {
 	log.Printf("Marking host %s as unreachable", h)
-	delete(li.hostLoad, h)
+	delete(li.hostLoadPrimary, h)
+	delete(li.hostLoadRR, h)
 	delete(li.hostPairs, h)
 	if li.unavailableHosts == nil {
 		li.unavailableHosts = make(map[string]int64)
@@ -338,9 +354,11 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	defer rows.Close()
 	var host, nodeType, cloud, region, zone, publicIP string
 	var port, numConns int
-	newHostLoad := make(map[string]int)
+	newHostLoadPrimary := make(map[string]int)
+	newHostLoadRR := make(map[string]int)
 	newHostPort := make(map[string]uint16)
-	newZoneList := make(map[string][]string)
+	newZoneListPrimary := make(map[string][]string)
+	newZoneListRR := make(map[string][]string)
 	newHostPairs := make(map[string]string)
 	if li.unavailableHosts == nil {
 		li.unavailableHosts = make(map[string]int64)
@@ -358,20 +376,13 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			newHostPairs[host] = publicIP
 			tk := cloud + "." + region + "." + zone
 			tk_star := cloud + "." + region // Used for topology_keys of type: cloud.region.*
-			hosts, ok := newZoneList[tk]
-			if !ok {
-				hosts = make([]string, 0)
+			if nodeType == "primary" {
+				setUpZoneList(newZoneListPrimary, tk, tk_star, host)
+				newHostLoadPrimary[host] = li.hostLoadPrimary[host]
+			} else {
+				setUpZoneList(newZoneListRR, tk, tk_star, host)
+				newHostLoadRR[host] = li.hostLoadRR[host]
 			}
-			hosts_star, ok_star := newZoneList[tk_star]
-			if !ok_star {
-				hosts_star = make([]string, 0)
-			}
-			hosts = append(hosts, host)
-			hosts_star = append(hosts_star, host)
-			newZoneList[tk] = hosts
-			newZoneList[tk_star] = hosts_star
-			cnt := li.hostLoad[host]
-			newHostLoad[host] = cnt
 			newHostPort[host] = uint16(port)
 		}
 	}
@@ -384,25 +395,64 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		return refreshLoadInfo(li)
 	}
 	li.hostPort = newHostPort
-	li.zoneList = newZoneList
+	li.zoneListPrimary = newZoneListPrimary
+	li.zoneListRR = newZoneListRR
 	li.hostPairs = newHostPairs
-	li.hostLoad = newHostLoad
+	li.hostLoadPrimary = newHostLoadPrimary
+	li.hostLoadRR = newHostLoadRR
 	li.lastRefresh = time.Now()
 	for uh, t := range li.unavailableHosts {
 		if time.Now().Unix()-t > li.config.failedHostReconnectDelaySecs {
 			// clear the unavailable-hosts list
 			log.Printf("Removing %s from unavailableHosts Map", uh)
-			li.hostLoad[uh] = 0
+			if _, found := li.hostLoadPrimary[uh]; found {
+				li.hostLoadPrimary[uh] = 0
+			} else if _, found = li.hostLoadRR[uh]; found {
+				li.hostLoadRR[uh] = 0
+			}
 			delete(li.unavailableHosts, uh)
 		}
 	}
 	return nil
 }
 
+func setUpZoneList(zoneList map[string][]string, tk string, tk_star string, host string) {
+	hosts, ok := zoneList[tk]
+	if !ok {
+		hosts = make([]string, 0)
+	}
+	hosts_star, ok_star := zoneList[tk_star]
+	if !ok_star {
+		hosts_star = make([]string, 0)
+	}
+	hosts = append(hosts, host)
+	hosts_star = append(hosts_star, host)
+	zoneList[tk] = hosts
+	zoneList[tk_star] = hosts_star
+}
+
 func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 	leastCnt := int(math.MaxInt32)
 	leastLoaded := ""
 	leastLoadedservers := make([]string, 0)
+	zonelist := make(map[string][]string)
+	hostload := make(map[string]int)
+	if li.config.loadBalance == "only-rr" || li.config.loadBalance == "prefer-rr" {
+		maps.Copy(zonelist, li.zoneListRR)
+		maps.Copy(hostload, li.hostLoadRR)
+	} else if li.config.loadBalance == "only-primary" || li.config.loadBalance == "prefer-primary" {
+		maps.Copy(zonelist, li.zoneListPrimary)
+		maps.Copy(hostload, li.hostLoadPrimary)
+	} else {
+		maps.Copy(zonelist, li.zoneListRR)
+		maps.Copy(hostload, li.hostLoadRR)
+		for k, v := range li.zoneListPrimary {
+			hosts := zonelist[k]
+			hosts = append(hosts, v...)
+			zonelist[k] = hosts
+		}
+		maps.Copy(hostload, li.hostLoadPrimary)
+	}
 	if li.config.topologyKeys != nil {
 		for i := 0; i < len(li.config.topologyKeys); i++ {
 			var servers []string
@@ -411,15 +461,15 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 				if toCheckStar[2] == "*" {
 					tk = toCheckStar[0] + "." + toCheckStar[1]
 				}
-				servers = append(servers, li.zoneList[tk]...)
+				servers = append(servers, zonelist[tk]...)
 			}
 			for _, h := range servers {
 				if !isHostAway(li, h) {
-					if li.hostLoad[h] < leastCnt {
+					if hostload[h] < leastCnt {
 						leastLoadedservers = nil
 						leastLoadedservers = append(leastLoadedservers, h)
-						leastCnt = li.hostLoad[h]
-					} else if li.hostLoad[h] == leastCnt {
+						leastCnt = hostload[h]
+					} else if hostload[h] == leastCnt {
 						leastLoadedservers = append(leastLoadedservers, h)
 					}
 				}
@@ -430,29 +480,33 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		}
 	}
 	if leastCnt == int(math.MaxInt32) && len(leastLoadedservers) == 0 {
-		if li.config.topologyKeys == nil || !li.config.fallbackToTopologyKeysOnly {
-			for h := range li.hostLoad {
-				if !isHostAway(li, h) {
-					if li.hostLoad[h] < leastCnt {
-						leastLoadedservers = nil
-						leastLoadedservers = append(leastLoadedservers, h)
-						leastCnt = li.hostLoad[h]
-					} else if li.hostLoad[h] == leastCnt {
-						leastLoadedservers = append(leastLoadedservers, h)
-					}
+		if !(li.config.loadBalance == "prefer-primary" || li.config.loadBalance == "prefer-rr") {
+			if li.config.topologyKeys == nil || !li.config.fallbackToTopologyKeysOnly {
+				leastCnt, leastLoadedservers = getHosts(li, hostload)
+			} else {
+				lbh := &lbHost{
+					err: ErrFallbackToOriginalBehaviour,
 				}
+				return lbh
 			}
 		} else {
-			lbh := &lbHost{
-				err: ErrFallbackToOriginalBehaviour,
+			leastCnt, leastLoadedservers = getHosts(li, hostload)
+			if leastCnt == int(math.MaxInt32) && len(leastLoadedservers) == 0 {
+				if li.config.loadBalance == "prefer-rr" {
+					leastCnt, leastLoadedservers = getHosts(li, li.hostLoadPrimary)
+				} else {
+					leastCnt, leastLoadedservers = getHosts(li, li.hostLoadRR)
+				}
 			}
-			return lbh
 		}
 	}
 
 	if len(leastLoadedservers) != 0 {
-		rand.Seed(time.Now().UnixNano())
-		leastLoaded = leastLoadedservers[rand.Intn(len(leastLoadedservers))]
+		randomIndex, err := rand.Int(rand.Reader, big.NewInt(int64(len(leastLoadedservers))))
+		if err != nil {
+			log.Fatalf("Could not select a leastloadedserver randomly")
+		}
+		leastLoaded = leastLoadedservers[randomIndex.Int64()]
 	}
 
 	if leastLoaded == "" {
@@ -488,8 +542,39 @@ func getHostWithLeastConns(li *ClusterLoadInfo) *lbHost {
 		port:     li.hostPort[leastLoaded],
 		err:      nil,
 	}
-	li.hostLoad[leastLoadedToUse] = leastCnt + 1
+	if leastLoaded == leastLoadedToUse {
+		if cnt, found := li.hostLoadPrimary[leastLoadedToUse]; found {
+			li.hostLoadPrimary[leastLoadedToUse] = cnt + 1
+		} else {
+			li.hostLoadRR[leastLoadedToUse] = leastCnt + 1
+		}
+	} else {
+		_, foundpublic := li.hostLoadPrimary[leastLoadedToUse]
+		_, foundprivate := li.hostLoadPrimary[leastLoaded]
+		if foundpublic || foundprivate {
+			li.hostLoadPrimary[leastLoadedToUse] = leastCnt + 1
+		} else {
+			li.hostLoadRR[leastLoadedToUse] = leastCnt + 1
+		}
+	}
 	return lbh
+}
+
+func getHosts(li *ClusterLoadInfo, hostLoad map[string]int) (int, []string) {
+	leastCnt := int(math.MaxInt32)
+	leastLoadedservers := make([]string, 0)
+	for h := range hostLoad {
+		if !isHostAway(li, h) {
+			if hostLoad[h] < leastCnt {
+				leastLoadedservers = nil
+				leastLoadedservers = append(leastLoadedservers, h)
+				leastCnt = hostLoad[h]
+			} else if hostLoad[h] == leastCnt {
+				leastLoadedservers = append(leastLoadedservers, h)
+			}
+		}
+	}
+	return leastCnt, leastLoadedservers
 }
 
 func isHostAway(li *ClusterLoadInfo, h string) bool {
@@ -532,12 +617,32 @@ func validateTopologyKeys(s string) ([]string, error) {
 	return tkeys, nil
 }
 
+// expects the loadBalance to be one of "true", "false", "only-rr", "only-primary", "prefer-rr", "prefer-primary" and "any"
+func validateLoadBalance(s string) bool {
+	switch s {
+	case
+		"true",
+		"false",
+		"only-rr",
+		"only-primary",
+		"prefer-rr",
+		"prefer-primary",
+		"any":
+		return true
+	}
+
+	return false
+}
+
 // For test purpose
 func GetHostLoad() map[string]map[string]int {
 	hl := make(map[string]map[string]int)
 	for cluster := range clustersLoadInfo {
 		hl[cluster] = make(map[string]int)
-		for host, cnt := range clustersLoadInfo[cluster].hostLoad {
+		for host, cnt := range clustersLoadInfo[cluster].hostLoadPrimary {
+			hl[cluster][host] = cnt
+		}
+		for host, cnt := range clustersLoadInfo[cluster].hostLoadRR {
 			hl[cluster][host] = cnt
 		}
 	}
@@ -549,23 +654,32 @@ func GetAZInfo() map[string]map[string][]string {
 	az := make(map[string]map[string][]string)
 	for n, cli := range clustersLoadInfo {
 		az[n] = make(map[string][]string)
-		for z, hosts := range cli.zoneList {
-			q := strings.Split(z, ".")
-			if len(q) == 3 {
-				newzl := make([]string, len(hosts))
-				copy(newzl, hosts)
-				az[n][z] = newzl
-			}
-		}
+		copyZoneList(az[n], cli.zoneListPrimary)
+		copyZoneList(az[n], cli.zoneListRR)
 	}
 	return az
+}
+
+func copyZoneList(azn map[string][]string, zl map[string][]string) {
+	for z, hosts := range zl {
+		q := strings.Split(z, ".")
+		if len(q) == 3 {
+			newzl := make([]string, len(hosts))
+			copy(newzl, hosts)
+			azn[z] = newzl
+		}
+	}
+
 }
 
 // For test purpose
 func EmptyHostLoad() map[string]map[string]int {
 	for cluster := range clustersLoadInfo {
-		for host := range clustersLoadInfo[cluster].hostLoad {
-			delete(clustersLoadInfo[cluster].hostLoad, host)
+		for host := range clustersLoadInfo[cluster].hostLoadPrimary {
+			delete(clustersLoadInfo[cluster].hostLoadPrimary, host)
+		}
+		for host := range clustersLoadInfo[cluster].hostLoadRR {
+			delete(clustersLoadInfo[cluster].hostLoadRR, host)
 		}
 	}
 	return nil
