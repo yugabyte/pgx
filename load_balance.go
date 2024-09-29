@@ -231,7 +231,9 @@ func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err 
 			Discarding rest of the fallback option to handle multi host urls,
 			since we want to fallback to the next least loaded server and not the next host of the url.
 		*/
-		config.Fallbacks = config.Fallbacks[:1]
+		if len(config.Fallbacks) > 0 {
+			config.Fallbacks = config.Fallbacks[:1]
+		}
 		config.connString = replaceHostString(config.connString, leastLoadedHost.hostname, leastLoadedHost.port)
 		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, leastLoadedHost)
 	} else {
