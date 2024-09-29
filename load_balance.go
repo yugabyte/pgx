@@ -219,66 +219,82 @@ func produceHostName(in chan *ClusterLoadInfo, out chan *lbHost) {
 func connectLoadBalanced(ctx context.Context, config *ConnConfig) (c *Conn, err error) {
 	newLoadInfo := NewClusterLoadInfo(ctx, config)
 	requestChan <- newLoadInfo
-	lbHost := <-hostChan
-	if lbHost.err == ErrFallbackToOriginalBehaviour {
-		return nil, lbHost.err
+	leastLoadedHost := <-hostChan
+	if leastLoadedHost.err == ErrFallbackToOriginalBehaviour {
+		return nil, leastLoadedHost.err
 	}
-	if lbHost.err != nil {
+	if leastLoadedHost.err != nil {
 		return connect(ctx, config) // fallback to original behaviour
 	}
-	if lbHost.hostname == config.Host {
-		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, lbHost)
+	if leastLoadedHost.hostname == config.Host {
+		/*
+			Discarding rest of the fallback option to handle multi host urls,
+			since we want to fallback to the next least loaded server and not the next host of the url.
+		*/
+		config.Fallbacks = config.Fallbacks[:1]
+		config.connString = replaceHostString(config.connString, leastLoadedHost.hostname, leastLoadedHost.port)
+		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, leastLoadedHost)
 	} else {
-		newConnString := replaceHostString(config.connString, lbHost.hostname, lbHost.port)
+		newConnString := replaceHostString(config.connString, leastLoadedHost.hostname, leastLoadedHost.port)
 		newConfig, err := ParseConfig(newConnString)
 		if err != nil {
 			return nil, err
 		}
-		newConfig.Port = lbHost.port
-		newConfig.controlHost = config.controlHost
-		newConfig.TLSConfig = config.TLSConfig
-		return connectWithRetries(ctx, config.controlHost, newConfig, newLoadInfo, lbHost)
+		/*
+			Replacing Host, port, Fallbacks list and connstring in the user config,
+			as per the least loaded server received.
+		*/
+		config.Host = newConfig.Host
+		config.Port = newConfig.Port
+		config.Fallbacks = newConfig.Fallbacks
+		config.connString = newConfig.connString
+		return connectWithRetries(ctx, config.controlHost, config, newLoadInfo, leastLoadedHost)
 	}
 }
 
-func connectWithRetries(ctx context.Context, controlHost string, newConfig *ConnConfig,
-	newLoadInfo *ClusterLoadInfo, lbHost *lbHost) (c *Conn, er error) {
+func connectWithRetries(ctx context.Context, controlHost string, config *ConnConfig,
+	newLoadInfo *ClusterLoadInfo, leastLoadedHost *lbHost) (c *Conn, er error) {
 	var timeout time.Duration = 0
 	if ctxDeadline, ok := ctx.Deadline(); ok {
 		timeout = time.Until(ctxDeadline)
 	}
-	conn, err := connect(ctx, newConfig)
+	conn, err := connect(ctx, config)
 	for i := 0; i < MAX_RETRIES && err != nil; i++ {
-		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
-		log.Printf("Adding %s to unavailableHosts due to %s", newConfig.Host, err.Error())
-		newLoadInfo.unavailableHosts = map[string]int64{lbHost.hostname: time.Now().Unix()}
+		decrementConnCount(config.controlHost + "," + config.Host)
+		log.Printf("Adding %s to unavailableHosts due to %s", config.Host, err.Error())
+		newLoadInfo.unavailableHosts = map[string]int64{leastLoadedHost.hostname: time.Now().Unix()}
 		requestChan <- newLoadInfo
-		lbHost = <-hostChan
-		if lbHost.err != nil {
-			return nil, lbHost.err
+		leastLoadedHost = <-hostChan
+		if leastLoadedHost.err != nil {
+			return nil, leastLoadedHost.err
 		}
 		if timeout > 0 {
 			ctx, _ = context.WithTimeout(context.Background(), timeout)
 		} else {
 			ctx = context.Background()
 		}
-		if lbHost.hostname == newConfig.Host {
-			conn, err = connect(ctx, newConfig)
+		if leastLoadedHost.hostname == config.Host {
+			conn, err = connect(ctx, config)
 		} else {
-			newConnString := strings.Replace(newConfig.connString, newConfig.Host, lbHost.hostname, -1)
-			oldTLSConfig := newConfig.TLSConfig
-			newConfig, err = ParseConfig(newConnString)
-			if err != nil {
-				return nil, err
+			/*
+				Replacing Host, port, Fallbacks list and connstring in the user config,
+				as per the least loaded server received.
+			*/
+			newConnString := replaceHostString(config.connString, leastLoadedHost.hostname, leastLoadedHost.port)
+			newConfig, err1 := ParseConfig(newConnString)
+			if err1 != nil {
+				return nil, err1
 			}
-			newConfig.Port = lbHost.port
-			newConfig.controlHost = controlHost
-			newConfig.TLSConfig = oldTLSConfig
-			conn, err = connect(ctx, newConfig)
+			config.Host = newConfig.Host
+			config.Port = newConfig.Port
+			config.Fallbacks = newConfig.Fallbacks
+			config.controlHost = controlHost
+			config.connString = newConfig.connString
+			conn, err = connect(ctx, config)
 		}
 	}
 	if err != nil {
-		decrementConnCount(newConfig.controlHost + "," + newConfig.Host)
+		decrementConnCount(config.controlHost + "," + config.Host)
 	}
 	return conn, err
 }
@@ -310,8 +326,14 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			log.Printf("refreshLoadInfo(): ParseConfig for control connection failed, %s", err.Error())
 			return err
 		}
-		li.config = ctrlConfig
-		li.config.Host = LookupIP(li.config.Host)
+		/*
+			Replacing Host, port, Fallbacks list and connstring in the user config,
+			as per the host on which control connection is attempted.
+		*/
+		li.config.Host = LookupIP(ctrlConfig.Host)
+		li.config.Port = ctrlConfig.Port
+		li.config.Fallbacks = ctrlConfig.Fallbacks
+		li.config.connString = ctrlConfig.connString
 		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
@@ -325,7 +347,16 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 			}
 			for h := range li.hostPairs {
 				newConnString := replaceHostString(li.config.connString, h, li.hostPort[h])
-				if li.config, err = ParseConfig(newConnString); err == nil {
+				/*
+					Replacing Host, port, Fallbacks list and connstring in the user config,
+					as per the host on which control connection is attempted.
+				*/
+				if ctrlConfig, err = ParseConfig(newConnString); err == nil {
+					li.config.Host = ctrlConfig.Host
+					li.config.Port = ctrlConfig.Port
+					li.config.Fallbacks = ctrlConfig.Fallbacks
+					li.config.connString = ctrlConfig.connString
+					li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
 					li.ctrlCtx, _ = context.WithTimeout(context.Background(), CONTROL_CONN_TIMEOUT)
 					if li.controlConn, err = connect(li.ctrlCtx, li.config); err == nil {
 						log.Printf("Created control connection to host %s", h)
@@ -341,13 +372,14 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 				return err
 			}
 		}
+		li.config.controlHost = li.config.Host
 	}
 	// defer li.controlConn.Close(li.ctrlCtx)
 
 	rows, err := li.controlConn.Query(li.ctrlCtx, LB_QUERY)
 	if err != nil {
 		log.Printf("Could not query load information: %s", err.Error())
-		markHostAway(li, li.config.Host)
+		markHostAway(li, li.config.controlHost)
 		li.controlConn = nil
 		return refreshLoadInfo(li)
 	}
@@ -367,7 +399,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		err := rows.Scan(&host, &port, &numConns, &nodeType, &cloud, &region, &zone, &publicIP)
 		if err != nil {
 			log.Printf("Could not read load information: %s", err.Error())
-			markHostAway(li, li.config.Host)
+			markHostAway(li, li.config.controlHost)
 			li.controlConn = nil
 			return refreshLoadInfo(li)
 		} else {
@@ -390,7 +422,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 	rsError := rows.Err()
 	if rsError != nil {
 		log.Printf("refreshLoadInfo(): Could not read load information, Rows.Err(): %s", rsError.Error())
-		markHostAway(li, li.config.Host)
+		markHostAway(li, li.config.controlHost)
 		li.controlConn = nil
 		return refreshLoadInfo(li)
 	}
