@@ -209,12 +209,12 @@ func (ct *copyFrom) run(ctx context.Context) (int64, error) {
 		w.Close()
 	}()
 
-	baseQuery := fmt.Sprintf("copy %s ( %s ) from stdin binary", quotedTableName, quotedColumnNames)
+	baseQuery := fmt.Sprintf("copy %s ( %s ) from stdin with (FORMAT binary", quotedTableName, quotedColumnNames)
 	if ct.options != nil {
-		baseQuery += " WITH (" + buildOptions(ct.options) + ")"
+		baseQuery += "," + buildOptions(ct.options)
 	}
 
-	commandTag, err := ct.conn.pgConn.CopyFrom(ctx, r, baseQuery+";")
+	commandTag, err := ct.conn.pgConn.CopyFrom(ctx, r, baseQuery+");")
 
 	r.Close()
 	<-doneChan
