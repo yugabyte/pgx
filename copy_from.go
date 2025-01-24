@@ -211,7 +211,7 @@ func (ct *copyFrom) run(ctx context.Context) (int64, error) {
 
 	baseQuery := fmt.Sprintf("copy %s ( %s ) from stdin binary", quotedTableName, quotedColumnNames)
 	if ct.options != nil {
-		baseQuery += buildOptions(ct.options)
+		baseQuery += " WITH (" + buildOptions(ct.options) + ")"
 	}
 
 	commandTag, err := ct.conn.pgConn.CopyFrom(ctx, r, baseQuery+";")
@@ -280,7 +280,7 @@ func buildOptions(inputOptions *CopyFromOptions) string {
 	if inputOptions.RowsPerTransaction > 0 {
 		options = append(options, fmt.Sprintf("ROWS_PER_TRANSACTION %d", inputOptions.RowsPerTransaction))
 	}
-	return "WITH (" + strings.Join(options, ",") + ")"
+	return strings.Join(options, ",")
 }
 
 // CopyFrom uses the PostgreSQL copy protocol to perform bulk data insertion. It returns the number of rows copied and
