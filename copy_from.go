@@ -5,10 +5,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/yugabyte/pgx/v5/internal/pgio"
 	"github.com/yugabyte/pgx/v5/pgconn"
 )
+
+// CopyFromOptions are options for the CopyFrom operation.
+// https://www.postgresql.org/docs/current/sql-copy.html
+type CopyFromOptions struct {
+	RowsPerTransaction int
+	DisableFKCheck     bool
+	ReplaceRows        bool
+}
 
 // CopyFromRows returns a CopyFromSource interface over the provided rows slice
 // making it usable by *Conn.CopyFrom.
@@ -113,6 +122,7 @@ type copyFrom struct {
 	rowSrc        CopyFromSource
 	readerErrChan chan error
 	mode          QueryExecMode
+	options       *CopyFromOptions
 }
 
 func (ct *copyFrom) run(ctx context.Context) (int64, error) {
@@ -199,7 +209,12 @@ func (ct *copyFrom) run(ctx context.Context) (int64, error) {
 		w.Close()
 	}()
 
-	commandTag, err := ct.conn.pgConn.CopyFrom(ctx, r, fmt.Sprintf("copy %s ( %s ) from stdin binary;", quotedTableName, quotedColumnNames))
+	baseQuery := fmt.Sprintf("copy %s ( %s ) from stdin binary", quotedTableName, quotedColumnNames)
+	if ct.options != nil {
+		baseQuery += buildOptions(ct.options)
+	}
+
+	commandTag, err := ct.conn.pgConn.CopyFrom(ctx, r, baseQuery+";")
 
 	r.Close()
 	<-doneChan
@@ -254,6 +269,20 @@ func (ct *copyFrom) buildCopyBuf(buf []byte, sd *pgconn.StatementDescription) (b
 	return false, buf, nil
 }
 
+func buildOptions(inputOptions *CopyFromOptions) string {
+	options := make([]string, 0, 3)
+	if inputOptions.DisableFKCheck {
+		options = append(options, "DISABLE_FK_CHECK")
+	}
+	if inputOptions.ReplaceRows {
+		options = append(options, "REPLACE")
+	}
+	if inputOptions.RowsPerTransaction > 0 {
+		options = append(options, fmt.Sprintf("ROWS_PER_TRANSACTION %d", inputOptions.RowsPerTransaction))
+	}
+	return "WITH (" + strings.Join(options, ",") + ")"
+}
+
 // CopyFrom uses the PostgreSQL copy protocol to perform bulk data insertion. It returns the number of rows copied and
 // an error.
 //
@@ -270,6 +299,20 @@ func (c *Conn) CopyFrom(ctx context.Context, tableName Identifier, columnNames [
 		rowSrc:        rowSrc,
 		readerErrChan: make(chan error),
 		mode:          c.config.DefaultQueryExecMode,
+	}
+
+	return ct.run(ctx)
+}
+
+func (c *Conn) CopyFromWithOptions(ctx context.Context, tableName Identifier, columnNames []string, rowSrc CopyFromSource, options *CopyFromOptions) (int64, error) {
+	ct := &copyFrom{
+		conn:          c,
+		tableName:     tableName,
+		columnNames:   columnNames,
+		rowSrc:        rowSrc,
+		readerErrChan: make(chan error),
+		mode:          c.config.DefaultQueryExecMode,
+		options:       options,
 	}
 
 	return ct.run(ctx)
