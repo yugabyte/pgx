@@ -95,6 +95,9 @@ type Pool struct {
 
 	healthCheckChan chan struct{}
 
+	acquireTracer AcquireTracer
+	releaseTracer ReleaseTracer
+
 	closeOnce sync.Once
 	closeChan chan struct{}
 }
@@ -193,6 +196,14 @@ func NewWithConfig(ctx context.Context, config *Config) (*Pool, error) {
 		healthCheckPeriod:     config.HealthCheckPeriod,
 		healthCheckChan:       make(chan struct{}, 1),
 		closeChan:             make(chan struct{}),
+	}
+
+	if t, ok := config.ConnConfig.Tracer.(AcquireTracer); ok {
+		p.acquireTracer = t
+	}
+
+	if t, ok := config.ConnConfig.Tracer.(ReleaseTracer); ok {
+		p.releaseTracer = t
 	}
 
 	var err error
@@ -498,7 +509,18 @@ func (p *Pool) createIdleResources(parentCtx context.Context, targetResources in
 }
 
 // Acquire returns a connection (*Conn) from the Pool
-func (p *Pool) Acquire(ctx context.Context) (*Conn, error) {
+func (p *Pool) Acquire(ctx context.Context) (c *Conn, err error) {
+	if p.acquireTracer != nil {
+		ctx = p.acquireTracer.TraceAcquireStart(ctx, p, TraceAcquireStartData{})
+		defer func() {
+			var conn *pgx.Conn
+			if c != nil {
+				conn = c.Conn()
+			}
+			p.acquireTracer.TraceAcquireEnd(ctx, p, TraceAcquireEndData{Conn: conn, Err: err})
+		}()
+	}
+
 	for {
 		res, err := p.p.Acquire(ctx)
 		if err != nil {
