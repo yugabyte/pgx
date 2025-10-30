@@ -97,7 +97,8 @@ func testCopyFrom(t *testing.T, ctx context.Context, db interface {
 	execer
 	queryer
 	copyFromer
-}) {
+},
+) {
 	_, err := db.Exec(ctx, `create temporary table foo(a int2, b int4, c int8, d varchar, e text, f date, g timestamptz)`)
 	require.NoError(t, err)
 
@@ -141,12 +142,14 @@ func assertConfigsEqual(t *testing.T, expected, actual *pgxpool.Config, testName
 	// Can't test function equality, so just test that they are set or not.
 	assert.Equalf(t, expected.AfterConnect == nil, actual.AfterConnect == nil, "%s - AfterConnect", testName)
 	assert.Equalf(t, expected.BeforeAcquire == nil, actual.BeforeAcquire == nil, "%s - BeforeAcquire", testName)
+	assert.Equalf(t, expected.PrepareConn == nil, actual.PrepareConn == nil, "%s - PrepareConn", testName)
 	assert.Equalf(t, expected.AfterRelease == nil, actual.AfterRelease == nil, "%s - AfterRelease", testName)
 
 	assert.Equalf(t, expected.MaxConnLifetime, actual.MaxConnLifetime, "%s - MaxConnLifetime", testName)
 	assert.Equalf(t, expected.MaxConnIdleTime, actual.MaxConnIdleTime, "%s - MaxConnIdleTime", testName)
 	assert.Equalf(t, expected.MaxConns, actual.MaxConns, "%s - MaxConns", testName)
 	assert.Equalf(t, expected.MinConns, actual.MinConns, "%s - MinConns", testName)
+	assert.Equalf(t, expected.MinIdleConns, actual.MinIdleConns, "%s - MinIdleConns", testName)
 	assert.Equalf(t, expected.HealthCheckPeriod, actual.HealthCheckPeriod, "%s - HealthCheckPeriod", testName)
 
 	assertConnConfigsEqual(t, expected.ConnConfig, actual.ConnConfig, testName)

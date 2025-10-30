@@ -10,8 +10,7 @@ import (
 
 const sslRequestNumber = 80877103
 
-type SSLRequest struct {
-}
+type SSLRequest struct{}
 
 // Frontend identifies this message as sendable by a PostgreSQL frontend.
 func (*SSLRequest) Frontend() {}
@@ -31,10 +30,10 @@ func (dst *SSLRequest) Decode(src []byte) error {
 }
 
 // Encode encodes src into dst. dst will include the 4 byte message length.
-func (src *SSLRequest) Encode(dst []byte) []byte {
+func (src *SSLRequest) Encode(dst []byte) ([]byte, error) {
 	dst = pgio.AppendInt32(dst, 8)
 	dst = pgio.AppendInt32(dst, sslRequestNumber)
-	return dst
+	return dst, nil
 }
 
 // MarshalJSON implements encoding/json.Marshaler.

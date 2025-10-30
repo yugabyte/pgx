@@ -78,7 +78,10 @@ func BenchmarkExec(b *testing.B) {
 						}
 					}
 					_, err = rr.Close()
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -127,7 +130,10 @@ func BenchmarkExecPossibleToCancel(b *testing.B) {
 				}
 			}
 			_, err = rr.Close()
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -184,7 +190,10 @@ func BenchmarkExecPrepared(b *testing.B) {
 					}
 				}
 				_, err = rr.Close()
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -227,7 +236,10 @@ func BenchmarkExecPreparedPossibleToCancel(b *testing.B) {
 			}
 		}
 		_, err = rr.Close()
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 		if err != nil {
 			b.Fatal(err)
 		}

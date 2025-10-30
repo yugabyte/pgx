@@ -2,13 +2,15 @@ package pgtype_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	pgx "github.com/yugabyte/pgx/v5"
 	"github.com/yugabyte/pgx/v5/pgtype"
 	"github.com/yugabyte/pgx/v5/pgxtest"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTimestampCodec(t *testing.T) {
@@ -38,6 +40,42 @@ func TestTimestampCodec(t *testing.T) {
 	})
 }
 
+func TestTimestampCodecWithScanLocationUTC(t *testing.T) {
+	skipCockroachDB(t, "Server does not support infinite timestamps (see https://github.com/cockroachdb/cockroach/issues/41564)")
+
+	connTestRunner := defaultConnTestRunner
+	connTestRunner.AfterConnect = func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name:  "timestamp",
+			OID:   pgtype.TimestampOID,
+			Codec: &pgtype.TimestampCodec{ScanLocation: time.UTC},
+		})
+	}
+
+	pgxtest.RunValueRoundTripTests(context.Background(), t, connTestRunner, nil, "timestamp", []pgxtest.ValueRoundTripTest{
+		// Have to use pgtype.Timestamp instead of time.Time as source because otherwise the simple and exec query exec
+		// modes will encode the time for timestamptz. That is, they will convert it from local time zone.
+		{pgtype.Timestamp{Time: time.Date(2000, 1, 1, 0, 0, 0, 0, time.Local), Valid: true}, new(time.Time), isExpectedEq(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC))},
+	})
+}
+
+func TestTimestampCodecWithScanLocationLocal(t *testing.T) {
+	skipCockroachDB(t, "Server does not support infinite timestamps (see https://github.com/cockroachdb/cockroach/issues/41564)")
+
+	connTestRunner := defaultConnTestRunner
+	connTestRunner.AfterConnect = func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name:  "timestamp",
+			OID:   pgtype.TimestampOID,
+			Codec: &pgtype.TimestampCodec{ScanLocation: time.Local},
+		})
+	}
+
+	pgxtest.RunValueRoundTripTests(context.Background(), t, connTestRunner, nil, "timestamp", []pgxtest.ValueRoundTripTest{
+		{time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), new(time.Time), isExpectedEq(time.Date(2000, 1, 1, 0, 0, 0, 0, time.Local))},
+	})
+}
+
 // https://github.com/jackc/pgx/v4/pgtype/pull/128
 func TestTimestampTranscodeBigTimeBinary(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
@@ -64,13 +102,23 @@ func TestTimestampCodecDecodeTextInvalid(t *testing.T) {
 }
 
 func TestTimestampMarshalJSON(t *testing.T) {
+	tsStruct := struct {
+		TS pgtype.Timestamp `json:"ts"`
+	}{}
+
+	tm := time.Date(2012, 3, 29, 10, 5, 45, 0, time.UTC)
+	tsString := "\"" + tm.Format("2006-01-02T15:04:05") + "\"" //  `"2012-03-29T10:05:45"`
+	var pgt pgtype.Timestamp
+	_ = pgt.Scan(tm)
+
 	successfulTests := []struct {
 		source pgtype.Timestamp
 		result string
 	}{
 		{source: pgtype.Timestamp{}, result: "null"},
-		{source: pgtype.Timestamp{Time: time.Date(2012, 3, 29, 10, 5, 45, 0, time.UTC), Valid: true}, result: "\"2012-03-29T10:05:45Z\""},
-		{source: pgtype.Timestamp{Time: time.Date(2012, 3, 29, 10, 5, 45, 555*1000*1000, time.UTC), Valid: true}, result: "\"2012-03-29T10:05:45.555Z\""},
+		{source: pgtype.Timestamp{Time: tm, Valid: true}, result: tsString},
+		{source: pgt, result: tsString},
+		{source: pgtype.Timestamp{Time: tm.Add(time.Second * 555 / 1000), Valid: true}, result: `"2012-03-29T10:05:45.555"`},
 		{source: pgtype.Timestamp{InfinityModifier: pgtype.Infinity, Valid: true}, result: "\"infinity\""},
 		{source: pgtype.Timestamp{InfinityModifier: pgtype.NegativeInfinity, Valid: true}, result: "\"-infinity\""},
 	}
@@ -80,10 +128,30 @@ func TestTimestampMarshalJSON(t *testing.T) {
 			t.Errorf("%d: %v", i, err)
 		}
 
-		if string(r) != tt.result {
+		if !assert.Equal(t, tt.result, string(r)) {
 			t.Errorf("%d: expected %v to convert to %v, but it was %v", i, tt.source, tt.result, string(r))
 		}
+		tsStruct.TS = tt.source
+		b, err := json.Marshal(tsStruct)
+		assert.NoErrorf(t, err, "failed to marshal %v %s", tt.source, err)
+		t2 := tsStruct
+		t2.TS = pgtype.Timestamp{} // Clear out the value so that we can compare after unmarshalling
+		err = json.Unmarshal(b, &t2)
+		assert.NoErrorf(t, err, "failed to unmarshal %v with %s", tt.source, err)
+		assert.True(t, tsStruct.TS.Time.Unix() == t2.TS.Time.Unix())
 	}
+}
+
+func TestTimestampUnmarshalJSONErrors(t *testing.T) {
+	tsStruct := struct {
+		TS pgtype.Timestamp `json:"ts"`
+	}{}
+	goodJson1 := []byte(`{"ts":"2012-03-29T10:05:45"}`)
+	assert.NoError(t, json.Unmarshal(goodJson1, &tsStruct))
+	goodJson2 := []byte(`{"ts":"2012-03-29T10:05:45Z"}`)
+	assert.NoError(t, json.Unmarshal(goodJson2, &tsStruct))
+	badJson := []byte(`{"ts":"2012-03-29"}`)
+	assert.Error(t, json.Unmarshal(badJson, &tsStruct))
 }
 
 func TestTimestampUnmarshalJSON(t *testing.T) {
@@ -92,8 +160,8 @@ func TestTimestampUnmarshalJSON(t *testing.T) {
 		result pgtype.Timestamp
 	}{
 		{source: "null", result: pgtype.Timestamp{}},
-		{source: "\"2012-03-29T10:05:45Z\"", result: pgtype.Timestamp{Time: time.Date(2012, 3, 29, 10, 5, 45, 0, time.UTC), Valid: true}},
-		{source: "\"2012-03-29T10:05:45.555Z\"", result: pgtype.Timestamp{Time: time.Date(2012, 3, 29, 10, 5, 45, 555*1000*1000, time.UTC), Valid: true}},
+		{source: "\"2012-03-29T10:05:45\"", result: pgtype.Timestamp{Time: time.Date(2012, 3, 29, 10, 5, 45, 0, time.UTC), Valid: true}},
+		{source: "\"2012-03-29T10:05:45.555\"", result: pgtype.Timestamp{Time: time.Date(2012, 3, 29, 10, 5, 45, 555*1000*1000, time.UTC), Valid: true}},
 		{source: "\"infinity\"", result: pgtype.Timestamp{InfinityModifier: pgtype.Infinity, Valid: true}},
 		{source: "\"-infinity\"", result: pgtype.Timestamp{InfinityModifier: pgtype.NegativeInfinity, Valid: true}},
 	}

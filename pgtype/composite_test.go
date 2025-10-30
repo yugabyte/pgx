@@ -5,16 +5,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	pgx "github.com/yugabyte/pgx/v5"
 	"github.com/yugabyte/pgx/v5/pgtype"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCompositeCodecTranscode(t *testing.T) {
-	skipCockroachDB(t, "Server does not support composite types (see https://github.com/cockroachdb/cockroach/issues/27792)")
-
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop type if exists ct_test;
 
 create type ct_test as (
@@ -91,10 +88,7 @@ func (p *point3d) ScanIndex(i int) any {
 }
 
 func TestCompositeCodecTranscodeStruct(t *testing.T) {
-	skipCockroachDB(t, "Server does not support composite types (see https://github.com/cockroachdb/cockroach/issues/27792)")
-
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop type if exists point3d;
 
 create type point3d as (
@@ -128,10 +122,7 @@ create type point3d as (
 }
 
 func TestCompositeCodecTranscodeStructWrapper(t *testing.T) {
-	skipCockroachDB(t, "Server does not support composite types (see https://github.com/cockroachdb/cockroach/issues/27792)")
-
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop type if exists point3d;
 
 create type point3d as (
@@ -169,10 +160,7 @@ create type point3d as (
 }
 
 func TestCompositeCodecDecodeValue(t *testing.T) {
-	skipCockroachDB(t, "Server does not support composite types (see https://github.com/cockroachdb/cockroach/issues/27792)")
-
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop type if exists point3d;
 
 create type point3d as (
@@ -214,10 +202,9 @@ create type point3d as (
 //
 // https://github.com/jackc/pgx/issues/1576
 func TestCompositeCodecTranscodeStructWrapperForTable(t *testing.T) {
-	skipCockroachDB(t, "Server does not support composite types (see https://github.com/cockroachdb/cockroach/issues/27792)")
+	skipCockroachDB(t, "Server does not support composite types from table definitions")
 
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop table if exists point3d;
 
 create table point3d (

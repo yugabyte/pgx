@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"testing"
@@ -33,16 +34,19 @@ func init() {
 }
 
 // Test for renamed types
-type _string string
-type _bool bool
-type _int8 int8
-type _int16 int16
-type _int16Slice []int16
-type _int32Slice []int32
-type _int64Slice []int64
-type _float32Slice []float32
-type _float64Slice []float64
-type _byteSlice []byte
+type (
+	_string       string
+	_bool         bool
+	_uint8        uint8
+	_int8         int8
+	_int16        int16
+	_int16Slice   []int16
+	_int32Slice   []int32
+	_int64Slice   []int64
+	_float32Slice []float32
+	_float64Slice []float64
+	_byteSlice    []byte
+)
 
 // unregisteredOID represents an actual type that is not registered. Cannot use 0 because that represents that the type
 // is not known (e.g. when using the simple protocol).
@@ -308,7 +312,7 @@ func TestPointerPointerStructScan(t *testing.T) {
 	plan := m.PlanScan(pgt.OID, pgtype.TextFormatCode, &c)
 	err := plan.Scan([]byte("(1)"), &c)
 	require.NoError(t, err)
-	require.Equal(t, c.ID, 1)
+	require.Equal(t, 1, c.ID)
 }
 
 // https://github.com/jackc/pgx/issues/1263
@@ -453,6 +457,14 @@ func TestMapScanNullToWrongType(t *testing.T) {
 	assert.False(t, pn.Valid)
 }
 
+func TestScanToSliceOfRenamedUint8(t *testing.T) {
+	m := pgtype.NewMap()
+	var ruint8 []_uint8
+	err := m.Scan(pgtype.Int2ArrayOID, pgx.TextFormatCode, []byte("{2,4}"), &ruint8)
+	assert.NoError(t, err)
+	assert.Equal(t, []_uint8{2, 4}, ruint8)
+}
+
 func TestMapScanTextToBool(t *testing.T) {
 	tests := []struct {
 		name string
@@ -520,7 +532,8 @@ func TestMapEncodePlanCacheUUIDTypeConfusion(t *testing.T) {
 		0, 0, 0, 16,
 		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 		0, 0, 0, 16,
-		15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0}
+		15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+	}
 
 	m := pgtype.NewMap()
 	buf, err := m.Encode(pgtype.UUIDArrayOID, pgtype.BinaryFormatCode,
@@ -535,6 +548,29 @@ func TestMapEncodePlanCacheUUIDTypeConfusion(t *testing.T) {
 		[]string{"00010203-0405-0607-0809-0a0b0c0d0e0f", "0f0e0d0c-0b0a-0908-0706-0504-03020100"},
 		nil)
 	require.Error(t, err)
+}
+
+// https://github.com/jackc/pgx/issues/1763
+func TestMapEncodeRawJSONIntoUnknownOID(t *testing.T) {
+	m := pgtype.NewMap()
+	buf, err := m.Encode(0, pgtype.TextFormatCode, json.RawMessage(`{"foo": "bar"}`), nil)
+	require.NoError(t, err)
+	require.Equal(t, []byte(`{"foo": "bar"}`), buf)
+}
+
+// PlanScan previously used a cache to improve performance. However, the cache could get confused in certain cases. The
+// example below was one such failure case.
+func TestCachedPlanScanConfusion(t *testing.T) {
+	m := pgtype.NewMap()
+	var err error
+
+	var tags any
+	err = m.Scan(pgtype.TextArrayOID, pgx.TextFormatCode, []byte("{foo,bar,baz}"), &tags)
+	require.NoError(t, err)
+
+	var cells [][]string
+	err = m.Scan(pgtype.TextArrayOID, pgx.TextFormatCode, []byte("{{foo,bar},{baz,quz}}"), &cells)
+	require.NoError(t, err)
 }
 
 func BenchmarkMapScanInt4IntoBinaryDecoder(b *testing.B) {
@@ -612,5 +648,12 @@ func BenchmarkScanPlanScanInt4IntoGoInt32(b *testing.B) {
 func isExpectedEq(a any) func(any) bool {
 	return func(v any) bool {
 		return a == v
+	}
+}
+
+func isPtrExpectedEq(a any) func(any) bool {
+	return func(v any) bool {
+		val := reflect.ValueOf(v)
+		return a == val.Elem().Interface()
 	}
 }

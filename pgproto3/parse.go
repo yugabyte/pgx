@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"math"
 
 	"github.com/yugabyte/pgx/v5/internal/pgio"
 )
@@ -52,27 +54,25 @@ func (dst *Parse) Decode(src []byte) error {
 }
 
 // Encode encodes src into dst. dst will include the 1 byte message type identifier and the 4 byte message length.
-func (src *Parse) Encode(dst []byte) []byte {
-	dst = append(dst, 'P')
-	sp := len(dst)
-	dst = pgio.AppendInt32(dst, -1)
+func (src *Parse) Encode(dst []byte) ([]byte, error) {
+	dst, sp := beginMessage(dst, 'P')
 
 	dst = append(dst, src.Name...)
 	dst = append(dst, 0)
 	dst = append(dst, src.Query...)
 	dst = append(dst, 0)
 
+	if len(src.ParameterOIDs) > math.MaxUint16 {
+		return nil, errors.New("too many parameter oids")
+	}
 	dst = pgio.AppendUint16(dst, uint16(len(src.ParameterOIDs)))
 	for _, oid := range src.ParameterOIDs {
 		dst = pgio.AppendUint32(dst, oid)
 	}
 
+<<<<<<< HEAD
 	pgio.SetInt32(dst[sp:], int32(len(dst[sp:])))
 
-	return dst
-}
-
-// MarshalJSON implements encoding/json.Marshaler.
 func (src Parse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type          string

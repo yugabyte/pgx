@@ -881,7 +881,6 @@ func (a *anyMultiDimSliceArray) SetDimensions(dimensions []ArrayDimension) error
 
 		return nil
 	}
-
 }
 
 func (a *anyMultiDimSliceArray) makeMultidimensionalSlice(sliceType reflect.Type, dimensions []ArrayDimension, flatSlice reflect.Value, flatSliceIdx int) reflect.Value {

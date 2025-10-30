@@ -1,6 +1,10 @@
 name: CI
 
-on: workflow_dispatch 
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
 
 jobs:
   test:
@@ -9,19 +13,9 @@ jobs:
 
     strategy:
       matrix:
-        go-version: ["1.20", "1.21"]
-        pg-version: [12, 13, 14, 15, 16, cockroachdb]
+        go-version: ["1.23", "1.24"]
+        pg-version: [13, 14, 15, 16, 17, cockroachdb]
         include:
-          - pg-version: 12
-            pgx-test-database: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
-            pgx-test-unix-socket-conn-string: "host=/var/run/postgresql dbname=pgx_test"
-            pgx-test-tcp-conn-string: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
-            pgx-test-scram-password-conn-string: "host=127.0.0.1 user=pgx_scram password=secret dbname=pgx_test"
-            pgx-test-md5-password-conn-string: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
-            pgx-test-plain-password-conn-string: "host=127.0.0.1 user=pgx_pw password=secret dbname=pgx_test"
-            pgx-test-tls-conn-string: "host=localhost user=pgx_ssl password=secret sslmode=verify-full sslrootcert=/tmp/ca.pem dbname=pgx_test"
-            pgx-ssl-password: certpw
-            pgx-test-tls-client-conn-string: "host=localhost user=pgx_sslcert sslmode=verify-full sslrootcert=/tmp/ca.pem sslcert=/tmp/pgx_sslcert.crt sslkey=/tmp/pgx_sslcert.key dbname=pgx_test"
           - pg-version: 13
             pgx-test-database: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
             pgx-test-unix-socket-conn-string: "host=/var/run/postgresql dbname=pgx_test"
@@ -53,6 +47,16 @@ jobs:
             pgx-ssl-password: certpw
             pgx-test-tls-client-conn-string: "host=localhost user=pgx_sslcert sslmode=verify-full sslrootcert=/tmp/ca.pem sslcert=/tmp/pgx_sslcert.crt sslkey=/tmp/pgx_sslcert.key dbname=pgx_test"
           - pg-version: 16
+            pgx-test-database: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
+            pgx-test-unix-socket-conn-string: "host=/var/run/postgresql dbname=pgx_test"
+            pgx-test-tcp-conn-string: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
+            pgx-test-scram-password-conn-string: "host=127.0.0.1 user=pgx_scram password=secret dbname=pgx_test"
+            pgx-test-md5-password-conn-string: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
+            pgx-test-plain-password-conn-string: "host=127.0.0.1 user=pgx_pw password=secret dbname=pgx_test"
+            pgx-test-tls-conn-string: "host=localhost user=pgx_ssl password=secret sslmode=verify-full sslrootcert=/tmp/ca.pem dbname=pgx_test"
+            pgx-ssl-password: certpw
+            pgx-test-tls-client-conn-string: "host=localhost user=pgx_sslcert sslmode=verify-full sslrootcert=/tmp/ca.pem sslcert=/tmp/pgx_sslcert.crt sslkey=/tmp/pgx_sslcert.key dbname=pgx_test"
+          - pg-version: 17
             pgx-test-database: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
             pgx-test-unix-socket-conn-string: "host=/var/run/postgresql dbname=pgx_test"
             pgx-test-tcp-conn-string: "host=127.0.0.1 user=pgx_md5 password=secret dbname=pgx_test"
@@ -102,7 +106,8 @@ jobs:
           git diff --exit-code
 
       - name: Test
-        run: go test -v -race ./...
+        # parallel testing is disabled because somehow parallel testing causes Github Actions to kill the runner.
+        run: go test -parallel=1 -race ./...
         env:
           PGX_TEST_DATABASE: ${{ matrix.pgx-test-database }}
           PGX_TEST_UNIX_SOCKET_CONN_STRING: ${{ matrix.pgx-test-unix-socket-conn-string }}
@@ -120,7 +125,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        go-version: ["1.20", "1.21"]
+        go-version: ["1.23", "1.24"]
 
     steps:
       - name: Setup PostgreSQL
@@ -145,6 +150,7 @@ jobs:
         shell: bash
 
       - name: Test
-        run: go test -v -race  ./...
+        # parallel testing is disabled because somehow parallel testing causes Github Actions to kill the runner.
+        run: go test -parallel=1 -race  ./...
         env:
           PGX_TEST_DATABASE: ${{ steps.postgres.outputs.connection-uri }}

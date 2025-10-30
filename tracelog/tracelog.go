@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgxpool"
 )
 
 // LogLevel represents the pgx logging level. See LogLevel* constants for
@@ -102,7 +104,7 @@ func logQueryArgs(args []any) []any {
 			}
 		case string:
 			if len(v) > 64 {
-				var l int = 0
+				l := 0
 				for w := 0; l < 64; l += w {
 					_, w = utf8.DecodeRuneInString(v[l:])
 				}
@@ -117,11 +119,38 @@ func logQueryArgs(args []any) []any {
 	return logArgs
 }
 
-// TraceLog implements pgx.QueryTracer, pgx.BatchTracer, pgx.ConnectTracer, and pgx.CopyFromTracer. All fields are
-// required.
+// TraceLogConfig holds the configuration for key names
+type TraceLogConfig struct {
+	TimeKey string
+}
+
+// DefaultTraceLogConfig returns the default configuration for TraceLog
+func DefaultTraceLogConfig() *TraceLogConfig {
+	return &TraceLogConfig{
+		TimeKey: "time",
+	}
+}
+
+// TraceLog implements pgx.QueryTracer, pgx.BatchTracer, pgx.ConnectTracer, pgx.CopyFromTracer, pgxpool.AcquireTracer,
+// and pgxpool.ReleaseTracer. Logger and LogLevel are required. Config will be automatically initialized on the
+// first use if nil.
 type TraceLog struct {
 	Logger   Logger
 	LogLevel LogLevel
+
+	Config           *TraceLogConfig
+	ensureConfigOnce sync.Once
+}
+
+// ensureConfig initializes the Config field with default values if it is nil.
+func (tl *TraceLog) ensureConfig() {
+	tl.ensureConfigOnce.Do(
+		func() {
+			if tl.Config == nil {
+				tl.Config = DefaultTraceLogConfig()
+			}
+		},
+	)
 }
 
 type ctxKey int
@@ -133,6 +162,7 @@ const (
 	tracelogCopyFromCtxKey
 	tracelogConnectCtxKey
 	tracelogPrepareCtxKey
+	tracelogAcquireCtxKey
 )
 
 type traceQueryData struct {
@@ -150,6 +180,7 @@ func (tl *TraceLog) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pg
 }
 
 func (tl *TraceLog) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData) {
+	tl.ensureConfig()
 	queryData := ctx.Value(tracelogQueryCtxKey).(*traceQueryData)
 
 	endTime := time.Now()
@@ -157,13 +188,13 @@ func (tl *TraceLog) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pgx.
 
 	if data.Err != nil {
 		if tl.shouldLog(LogLevelError) {
-			tl.log(ctx, conn, LogLevelError, "Query", map[string]any{"sql": queryData.sql, "args": logQueryArgs(queryData.args), "err": data.Err, "time": interval})
+			tl.log(ctx, conn, LogLevelError, "Query", map[string]any{"sql": queryData.sql, "args": logQueryArgs(queryData.args), "err": data.Err, tl.Config.TimeKey: interval})
 		}
 		return
 	}
 
 	if tl.shouldLog(LogLevelInfo) {
-		tl.log(ctx, conn, LogLevelInfo, "Query", map[string]any{"sql": queryData.sql, "args": logQueryArgs(queryData.args), "time": interval, "commandTag": data.CommandTag.String()})
+		tl.log(ctx, conn, LogLevelInfo, "Query", map[string]any{"sql": queryData.sql, "args": logQueryArgs(queryData.args), tl.Config.TimeKey: interval, "commandTag": data.CommandTag.String()})
 	}
 }
 
@@ -191,6 +222,7 @@ func (tl *TraceLog) TraceBatchQuery(ctx context.Context, conn *pgx.Conn, data pg
 }
 
 func (tl *TraceLog) TraceBatchEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceBatchEndData) {
+	tl.ensureConfig()
 	queryData := ctx.Value(tracelogBatchCtxKey).(*traceBatchData)
 
 	endTime := time.Now()
@@ -198,13 +230,13 @@ func (tl *TraceLog) TraceBatchEnd(ctx context.Context, conn *pgx.Conn, data pgx.
 
 	if data.Err != nil {
 		if tl.shouldLog(LogLevelError) {
-			tl.log(ctx, conn, LogLevelError, "BatchClose", map[string]any{"err": data.Err, "time": interval})
+			tl.log(ctx, conn, LogLevelError, "BatchClose", map[string]any{"err": data.Err, tl.Config.TimeKey: interval})
 		}
 		return
 	}
 
 	if tl.shouldLog(LogLevelInfo) {
-		tl.log(ctx, conn, LogLevelInfo, "BatchClose", map[string]any{"time": interval})
+		tl.log(ctx, conn, LogLevelInfo, "BatchClose", map[string]any{tl.Config.TimeKey: interval})
 	}
 }
 
@@ -223,6 +255,7 @@ func (tl *TraceLog) TraceCopyFromStart(ctx context.Context, conn *pgx.Conn, data
 }
 
 func (tl *TraceLog) TraceCopyFromEnd(ctx context.Context, conn *pgx.Conn, data pgx.TraceCopyFromEndData) {
+	tl.ensureConfig()
 	copyFromData := ctx.Value(tracelogCopyFromCtxKey).(*traceCopyFromData)
 
 	endTime := time.Now()
@@ -230,13 +263,13 @@ func (tl *TraceLog) TraceCopyFromEnd(ctx context.Context, conn *pgx.Conn, data p
 
 	if data.Err != nil {
 		if tl.shouldLog(LogLevelError) {
-			tl.log(ctx, conn, LogLevelError, "CopyFrom", map[string]any{"tableName": copyFromData.TableName, "columnNames": copyFromData.ColumnNames, "err": data.Err, "time": interval})
+			tl.log(ctx, conn, LogLevelError, "CopyFrom", map[string]any{"tableName": copyFromData.TableName, "columnNames": copyFromData.ColumnNames, "err": data.Err, tl.Config.TimeKey: interval})
 		}
 		return
 	}
 
 	if tl.shouldLog(LogLevelInfo) {
-		tl.log(ctx, conn, LogLevelInfo, "CopyFrom", map[string]any{"tableName": copyFromData.TableName, "columnNames": copyFromData.ColumnNames, "err": data.Err, "time": interval, "rowCount": data.CommandTag.RowsAffected()})
+		tl.log(ctx, conn, LogLevelInfo, "CopyFrom", map[string]any{"tableName": copyFromData.TableName, "columnNames": copyFromData.ColumnNames, "err": data.Err, tl.Config.TimeKey: interval, "rowCount": data.CommandTag.RowsAffected()})
 	}
 }
 
@@ -253,6 +286,7 @@ func (tl *TraceLog) TraceConnectStart(ctx context.Context, data pgx.TraceConnect
 }
 
 func (tl *TraceLog) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEndData) {
+	tl.ensureConfig()
 	connectData := ctx.Value(tracelogConnectCtxKey).(*traceConnectData)
 
 	endTime := time.Now()
@@ -261,11 +295,11 @@ func (tl *TraceLog) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEn
 	if data.Err != nil {
 		if tl.shouldLog(LogLevelError) {
 			tl.Logger.Log(ctx, LogLevelError, "Connect", map[string]any{
-				"host":     connectData.connConfig.Host,
-				"port":     connectData.connConfig.Port,
-				"database": connectData.connConfig.Database,
-				"time":     interval,
-				"err":      data.Err,
+				"host":            connectData.connConfig.Host,
+				"port":            connectData.connConfig.Port,
+				"database":        connectData.connConfig.Database,
+				tl.Config.TimeKey: interval,
+				"err":             data.Err,
 			})
 		}
 		return
@@ -274,10 +308,10 @@ func (tl *TraceLog) TraceConnectEnd(ctx context.Context, data pgx.TraceConnectEn
 	if data.Conn != nil {
 		if tl.shouldLog(LogLevelInfo) {
 			tl.log(ctx, data.Conn, LogLevelInfo, "Connect", map[string]any{
-				"host":     connectData.connConfig.Host,
-				"port":     connectData.connConfig.Port,
-				"database": connectData.connConfig.Database,
-				"time":     interval,
+				"host":            connectData.connConfig.Host,
+				"port":            connectData.connConfig.Port,
+				"database":        connectData.connConfig.Database,
+				tl.Config.TimeKey: interval,
 			})
 		}
 	}
@@ -298,6 +332,7 @@ func (tl *TraceLog) TracePrepareStart(ctx context.Context, _ *pgx.Conn, data pgx
 }
 
 func (tl *TraceLog) TracePrepareEnd(ctx context.Context, conn *pgx.Conn, data pgx.TracePrepareEndData) {
+	tl.ensureConfig()
 	prepareData := ctx.Value(tracelogPrepareCtxKey).(*tracePrepareData)
 
 	endTime := time.Now()
@@ -305,13 +340,51 @@ func (tl *TraceLog) TracePrepareEnd(ctx context.Context, conn *pgx.Conn, data pg
 
 	if data.Err != nil {
 		if tl.shouldLog(LogLevelError) {
-			tl.log(ctx, conn, LogLevelError, "Prepare", map[string]any{"name": prepareData.name, "sql": prepareData.sql, "err": data.Err, "time": interval})
+			tl.log(ctx, conn, LogLevelError, "Prepare", map[string]any{"name": prepareData.name, "sql": prepareData.sql, "err": data.Err, tl.Config.TimeKey: interval})
 		}
 		return
 	}
 
 	if tl.shouldLog(LogLevelInfo) {
-		tl.log(ctx, conn, LogLevelInfo, "Prepare", map[string]any{"name": prepareData.name, "sql": prepareData.sql, "time": interval, "alreadyPrepared": data.AlreadyPrepared})
+		tl.log(ctx, conn, LogLevelInfo, "Prepare", map[string]any{"name": prepareData.name, "sql": prepareData.sql, tl.Config.TimeKey: interval, "alreadyPrepared": data.AlreadyPrepared})
+	}
+}
+
+type traceAcquireData struct {
+	startTime time.Time
+}
+
+func (tl *TraceLog) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
+	return context.WithValue(ctx, tracelogAcquireCtxKey, &traceAcquireData{
+		startTime: time.Now(),
+	})
+}
+
+func (tl *TraceLog) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, data pgxpool.TraceAcquireEndData) {
+	tl.ensureConfig()
+	acquireData := ctx.Value(tracelogAcquireCtxKey).(*traceAcquireData)
+
+	endTime := time.Now()
+	interval := endTime.Sub(acquireData.startTime)
+
+	if data.Err != nil {
+		if tl.shouldLog(LogLevelError) {
+			tl.Logger.Log(ctx, LogLevelError, "Acquire", map[string]any{"err": data.Err, tl.Config.TimeKey: interval})
+		}
+		return
+	}
+
+	if data.Conn != nil {
+		if tl.shouldLog(LogLevelDebug) {
+			tl.log(ctx, data.Conn, LogLevelDebug, "Acquire", map[string]any{tl.Config.TimeKey: interval})
+		}
+	}
+}
+
+func (tl *TraceLog) TraceRelease(_ *pgxpool.Pool, data pgxpool.TraceReleaseData) {
+	if tl.shouldLog(LogLevelDebug) {
+		// there is no context on the TraceRelease callback
+		tl.log(context.Background(), data.Conn, LogLevelDebug, "Release", map[string]any{})
 	}
 }
 

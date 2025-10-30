@@ -191,11 +191,13 @@ type untypedBinaryRange struct {
 // 18 = [      = 10010
 // 24 =        = 11000
 
-const emptyMask = 1
-const lowerInclusiveMask = 2
-const upperInclusiveMask = 4
-const lowerUnboundedMask = 8
-const upperUnboundedMask = 16
+const (
+	emptyMask          = 1
+	lowerInclusiveMask = 2
+	upperInclusiveMask = 4
+	lowerUnboundedMask = 8
+	upperUnboundedMask = 16
+)
 
 func parseUntypedBinaryRange(src []byte) (*untypedBinaryRange, error) {
 	ubr := &untypedBinaryRange{}
@@ -273,7 +275,10 @@ func parseUntypedBinaryRange(src []byte) (*untypedBinaryRange, error) {
 	}
 
 	return ubr, nil
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 }
 
 // Range is a generic range type.

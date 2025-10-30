@@ -1,6 +1,8 @@
 package sanitize_test
 
 import (
+	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,47 +134,57 @@ func TestQuerySanitize(t *testing.T) {
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{int64(42)},
-			expected: `select 42`,
+			expected: `select  42 `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{float64(1.23)},
-			expected: `select 1.23`,
+			expected: `select  1.23 `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{true},
-			expected: `select true`,
+			expected: `select  true `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{[]byte{0, 1, 2, 3, 255}},
-			expected: `select '\x00010203ff'`,
+			expected: `select  '\x00010203ff' `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{nil},
-			expected: `select null`,
+			expected: `select  null `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{"foobar"},
-			expected: `select 'foobar'`,
+			expected: `select  'foobar' `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{"foo'bar"},
-			expected: `select 'foo''bar'`,
+			expected: `select  'foo''bar' `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"select ", 1}},
 			args:     []any{`foo\'bar`},
-			expected: `select 'foo\''bar'`,
+			expected: `select  'foo\''bar' `,
 		},
 		{
 			query:    sanitize.Query{Parts: []sanitize.Part{"insert ", 1}},
 			args:     []any{time.Date(2020, time.March, 1, 23, 59, 59, 999999999, time.UTC)},
-			expected: `insert '2020-03-01 23:59:59.999999Z'`,
+			expected: `insert  '2020-03-01 23:59:59.999999Z' `,
+		},
+		{
+			query:    sanitize.Query{Parts: []sanitize.Part{"select 1-", 1}},
+			args:     []any{int64(-1)},
+			expected: `select 1- -1 `,
+		},
+		{
+			query:    sanitize.Query{Parts: []sanitize.Part{"select 1-", 1}},
+			args:     []any{float64(-1)},
+			expected: `select 1- -1 `,
 		},
 	}
 
@@ -216,4 +228,56 @@ func TestQuerySanitize(t *testing.T) {
 			t.Errorf("%d. expected error %v, got %v", i, tt.expected, err)
 		}
 	}
+}
+
+func TestQuoteString(t *testing.T) {
+	tc := func(name, input string) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := string(sanitize.QuoteString(nil, input))
+			want := oldQuoteString(input)
+
+			if got != want {
+				t.Errorf("got:  %s", got)
+				t.Fatalf("want: %s", want)
+			}
+		})
+	}
+
+	tc("empty", "")
+	tc("text", "abcd")
+	tc("with quotes", `one's hat is always a cat`)
+}
+
+// This function was used before optimizations.
+// You should keep for testing purposes - we want to ensure there are no breaking changes.
+func oldQuoteString(str string) string {
+	return "'" + strings.ReplaceAll(str, "'", "''") + "'"
+}
+
+func TestQuoteBytes(t *testing.T) {
+	tc := func(name string, input []byte) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := string(sanitize.QuoteBytes(nil, input))
+			want := oldQuoteBytes(input)
+
+			if got != want {
+				t.Errorf("got:  %s", got)
+				t.Fatalf("want: %s", want)
+			}
+		})
+	}
+
+	tc("nil", nil)
+	tc("empty", []byte{})
+	tc("text", []byte("abcd"))
+}
+
+// This function was used before optimizations.
+// You should keep for testing purposes - we want to ensure there are no breaking changes.
+func oldQuoteBytes(buf []byte) string {
+	return `'\x` + hex.EncodeToString(buf) + "'"
 }

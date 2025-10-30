@@ -106,12 +106,12 @@ func main() {
 		panic(err)
 	}
 
-	writeEncryptedPrivateKey("pgx_sslcert.key", clientCertPrivKey, "certpw")
+	err = writeEncryptedPrivateKey("pgx_sslcert.key", clientCertPrivKey, "certpw")
 	if err != nil {
 		panic(err)
 	}
 
-	writeCertificate("pgx_sslcert.crt", clientBytes)
+	err = writeCertificate("pgx_sslcert.crt", clientBytes)
 	if err != nil {
 		panic(err)
 	}
@@ -161,7 +161,10 @@ func writeEncryptedPrivateKey(path string, privateKey *rsa.PrivateKey, password 
 	}
 
 	return nil
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 }
 
 func writeCertificate(path string, certBytes []byte) error {

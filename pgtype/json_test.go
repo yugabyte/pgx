@@ -6,11 +6,14 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	pgx "github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgtype"
 	"github.com/yugabyte/pgx/v5/pgxtest"
+	"github.com/stretchr/testify/require"
 )
 
 func isExpectedEqMap(a any) func(any) bool {
@@ -46,6 +49,7 @@ func TestJSONCodec(t *testing.T) {
 		Age  int    `json:"age"`
 	}
 
+	var str string
 	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, nil, "json", []pgxtest.ValueRoundTripTest{
 		{nil, new(*jsonStruct), isExpectedEq((*jsonStruct)(nil))},
 		{map[string]any(nil), new(*string), isExpectedEq((*string)(nil))},
@@ -61,6 +65,11 @@ func TestJSONCodec(t *testing.T) {
 
 		// Test driver.Valuer is used before json.Marshaler (https://github.com/jackc/pgx/issues/1805)
 		{Issue1805(7), new(Issue1805), isExpectedEq(Issue1805(7))},
+		// Test driver.Scanner is used before json.Unmarshaler (https://github.com/jackc/pgx/issues/2146)
+		{Issue2146(7), new(*Issue2146), isPtrExpectedEq(Issue2146(7))},
+
+		// Test driver.Scanner without pointer receiver (https://github.com/jackc/pgx/issues/2204)
+		{NonPointerJSONScanner{V: stringPtr("{}")}, NonPointerJSONScanner{V: &str}, func(a any) bool { return str == "{}" }},
 	})
 
 	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, pgxtest.KnownOIDQueryExecModes, "json", []pgxtest.ValueRoundTripTest{
@@ -107,6 +116,52 @@ func (i Issue1805) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("MarshalJSON called")
 }
 
+type Issue2146 int
+
+func (i *Issue2146) Scan(src any) error {
+	var source []byte
+	switch src.(type) {
+	case string:
+		source = []byte(src.(string))
+	case []byte:
+		source = src.([]byte)
+	default:
+		return errors.New("unknown source type")
+	}
+	var newI int
+	if err := json.Unmarshal(source, &newI); err != nil {
+		return err
+	}
+	*i = Issue2146(newI + 1)
+	return nil
+}
+
+func (i Issue2146) Value() (driver.Value, error) {
+	b, err := json.Marshal(int(i - 1))
+	return string(b), err
+}
+
+type NonPointerJSONScanner struct {
+	V *string
+}
+
+func (i NonPointerJSONScanner) Scan(src any) error {
+	switch c := src.(type) {
+	case string:
+		*i.V = c
+	case []byte:
+		*i.V = string(c)
+	default:
+		return errors.New("unknown source type")
+	}
+
+	return nil
+}
+
+func (i NonPointerJSONScanner) Value() (driver.Value, error) {
+	return i.V, nil
+}
+
 // https://github.com/jackc/pgx/issues/1273#issuecomment-1221414648
 func TestJSONCodecUnmarshalSQLNull(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
@@ -137,11 +192,15 @@ func TestJSONCodecUnmarshalSQLNull(t *testing.T) {
 		// A string cannot scan a NULL.
 		str := "foobar"
 		err = conn.QueryRow(ctx, "select null::json").Scan(&str)
-		require.EqualError(t, err, "can't scan into dest[0]: cannot scan NULL into *string")
+		fieldName := "json"
+		if conn.PgConn().ParameterStatus("crdb_version") != "" {
+			fieldName = "jsonb" // Seems like CockroachDB treats json as jsonb.
+		}
+		require.EqualError(t, err, fmt.Sprintf("can't scan into dest[0] (col: %s): cannot scan NULL into *string", fieldName))
 
 		// A non-string cannot scan a NULL.
 		err = conn.QueryRow(ctx, "select null::json").Scan(&n)
-		require.EqualError(t, err, "can't scan into dest[0]: cannot scan NULL into *int")
+		require.EqualError(t, err, fmt.Sprintf("can't scan into dest[0] (col: %s): cannot scan NULL into *int", fieldName))
 	})
 }
 
@@ -222,5 +281,82 @@ func TestJSONCodecEncodeJSONMarshalerThatCanBeWrapped(t *testing.T) {
 		err := conn.QueryRow(context.Background(), "select $1::json", &ParentIssue1681{}).Scan(&jsonStr)
 		require.NoError(t, err)
 		require.Equal(t, `{"custom":"thing"}`, jsonStr)
+	})
+}
+
+func TestJSONCodecCustomMarshal(t *testing.T) {
+	skipCockroachDB(t, "CockroachDB treats json as jsonb. This causes it to format differently than PostgreSQL.")
+
+	connTestRunner := defaultConnTestRunner
+	connTestRunner.AfterConnect = func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name: "json", OID: pgtype.JSONOID, Codec: &pgtype.JSONCodec{
+				Marshal: func(v any) ([]byte, error) {
+					return []byte(`{"custom":"value"}`), nil
+				},
+				Unmarshal: func(data []byte, v any) error {
+					return json.Unmarshal([]byte(`{"custom":"value"}`), v)
+				},
+			},
+		})
+	}
+
+	pgxtest.RunValueRoundTripTests(context.Background(), t, connTestRunner, pgxtest.KnownOIDQueryExecModes, "json", []pgxtest.ValueRoundTripTest{
+		// There is no space between "custom" and "value" in json type.
+		{map[string]any{"something": "else"}, new(string), isExpectedEq(`{"custom":"value"}`)},
+		{[]byte(`{"something":"else"}`), new(map[string]any), func(v any) bool {
+			return reflect.DeepEqual(v, map[string]any{"custom": "value"})
+		}},
+	})
+}
+
+func TestJSONCodecScanToNonPointerValues(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		n := 44
+		err := conn.QueryRow(ctx, "select '42'::jsonb").Scan(n)
+		require.Error(t, err)
+
+		var i *int
+		err = conn.QueryRow(ctx, "select '42'::jsonb").Scan(i)
+		require.Error(t, err)
+
+		m := 0
+		err = conn.QueryRow(ctx, "select '42'::jsonb").Scan(&m)
+		require.NoError(t, err)
+		require.Equal(t, 42, m)
+	})
+}
+
+func TestJSONCodecScanNull(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		var dest struct{}
+		err := conn.QueryRow(ctx, "select null::jsonb").Scan(&dest)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot scan NULL into *struct {}")
+
+		err = conn.QueryRow(ctx, "select 'null'::jsonb").Scan(&dest)
+		require.NoError(t, err)
+
+		var destPointer *struct{}
+		err = conn.QueryRow(ctx, "select null::jsonb").Scan(&destPointer)
+		require.NoError(t, err)
+		require.Nil(t, destPointer)
+
+		err = conn.QueryRow(ctx, "select 'null'::jsonb").Scan(&destPointer)
+		require.NoError(t, err)
+		require.Nil(t, destPointer)
+
+		var raw json.RawMessage
+		require.NoError(t, conn.QueryRow(ctx, "select 'null'::jsonb").Scan(&raw))
+		require.Equal(t, json.RawMessage("null"), raw)
+	})
+}
+
+func TestJSONCodecScanNullToPointerToSQLScanner(t *testing.T) {
+	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		var dest *Issue2146
+		err := conn.QueryRow(ctx, "select null::jsonb").Scan(&dest)
+		require.NoError(t, err)
+		require.Nil(t, dest)
 	})
 }

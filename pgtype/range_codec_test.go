@@ -75,7 +75,10 @@ func TestRangeCodecScanRangeTwiceWithUnbounded(t *testing.T) {
 	skipCockroachDB(t, "Server does not support range types (see https://github.com/cockroachdb/cockroach/issues/27791)")
 
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 		var r pgtype.Range[pgtype.Int4]
 
 		err := conn.QueryRow(context.Background(), `select '[1,5)'::int4range`).Scan(&r)
@@ -129,7 +132,10 @@ func TestRangeCodecDecodeValue(t *testing.T) {
 	skipCockroachDB(t, "Server does not support range types (see https://github.com/cockroachdb/cockroach/issues/27791)")
 
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, _ testing.TB, conn *pgx.Conn) {
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 		for _, tt := range []struct {
 			sql      string
 			expected any

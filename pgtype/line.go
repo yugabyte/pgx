@@ -24,11 +24,10 @@ type Line struct {
 	Valid   bool
 }
 
-func (line *Line) ScanLine(v Line) error {
-	*line = v
+// ScanLine implements the [LineScanner] interface.
 	return nil
-}
 
+// LineValue implements the [LineValuer] interface.
 func (line Line) LineValue() (Line, error) {
 	return line, nil
 }
@@ -37,7 +36,7 @@ func (line *Line) Set(src any) error {
 	return fmt.Errorf("cannot convert %v to Line", src)
 }
 
-// Scan implements the database/sql Scanner interface.
+// Scan implements the [database/sql.Scanner] interface.
 func (line *Line) Scan(src any) error {
 	if src == nil {
 		*line = Line{}
@@ -52,7 +51,7 @@ func (line *Line) Scan(src any) error {
 	return fmt.Errorf("cannot scan %T", src)
 }
 
-// Value implements the database/sql/driver Valuer interface.
+// Value implements the [database/sql/driver.Valuer] interface.
 func (line Line) Value() (driver.Value, error) {
 	if !line.Valid {
 		return nil, nil
@@ -129,7 +128,10 @@ func (encodePlanLineCodecText) Encode(value any, buf []byte) (newBuf []byte, err
 }
 
 func (LineCodec) PlanScan(m *Map, oid uint32, format int16, target any) ScanPlan {
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 	switch format {
 	case BinaryFormatCode:
 		switch target.(type) {

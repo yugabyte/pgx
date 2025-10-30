@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/yugabyte/pgx/v5/internal/pgio"
 	"github.com/yugabyte/pgx/v5/internal/pgmock"
 	"github.com/yugabyte/pgx/v5/pgconn"
+	"github.com/yugabyte/pgx/v5/pgconn/ctxwatch"
 	"github.com/yugabyte/pgx/v5/pgproto3"
 	"github.com/yugabyte/pgx/v5/pgtype"
 )
@@ -356,10 +358,8 @@ func TestConnectInvalidUser(t *testing.T) {
 
 	_, err = pgconn.ConnectConfig(ctx, config)
 	require.Error(t, err)
-	pgErr, ok := errors.Unwrap(err).(*pgconn.PgError)
-	if !ok {
-		t.Fatalf("Expected to receive a wrapped PgError, instead received: %v", err)
-	}
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
 	if pgErr.Code != "28000" && pgErr.Code != "28P01" {
 		t.Fatalf("Expected to receive a PgError with code 28000 or 28P01, instead received: %v", pgErr)
 	}
@@ -526,6 +526,22 @@ func TestConnectWithFallback(t *testing.T) {
 	conn, err := pgconn.ConnectConfig(ctx, config)
 	require.NoError(t, err)
 	closeConn(t, conn)
+}
+
+func TestConnectFailsWithResolveFailureAndFailedConnectionAttempts(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, err := pgconn.Connect(ctx, "host=localhost,127.0.0.1,foo.invalid port=1,2,3 sslmode=disable")
+	require.Error(t, err)
+	require.Nil(t, conn)
+
+	require.ErrorContains(t, err, "lookup foo.invalid")
+	// Not testing the entire string as depending on IPv4 or IPv6 support localhost may resolve to 127.0.0.1 or ::1.
+	require.ErrorContains(t, err, ":1 (localhost): dial error:")
+	require.ErrorContains(t, err, ":2 (127.0.0.1): dial error:")
 }
 
 func TestConnectWithValidateConnect(t *testing.T) {
@@ -1175,6 +1191,24 @@ func TestResultReaderValuesHaveSameCapacityAsLength(t *testing.T) {
 	ensureConnValid(t, pgConn)
 }
 
+// https://github.com/jackc/pgx/issues/1987
+func TestResultReaderReadNil(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	result := pgConn.ExecParams(ctx, "select null::text", nil, nil, nil, nil).Read()
+	require.NoError(t, result.Err)
+	require.Nil(t, result.Rows[0][0])
+
+	ensureConnValid(t, pgConn)
+}
+
 func TestConnExecPrepared(t *testing.T) {
 	t.Parallel()
 
@@ -1387,6 +1421,52 @@ func TestConnExecBatch(t *testing.T) {
 	assert.Equal(t, "SELECT 1", results[2].CommandTag.String())
 }
 
+type mockConnection struct {
+	net.Conn
+	writeLatency *time.Duration
+}
+
+func (m mockConnection) Write(b []byte) (n int, err error) {
+	time.Sleep(*m.writeLatency)
+	return m.Conn.Write(b)
+}
+
+func TestConnExecBatchWriteError(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+
+	var mockConn mockConnection
+	writeLatency := 0 * time.Second
+	config.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := net.Dial(network, address)
+		mockConn = mockConnection{conn, &writeLatency}
+		return mockConn, err
+	}
+
+	pgConn, err := pgconn.ConnectConfig(ctx, config)
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	batch := &pgconn.Batch{}
+	pgConn.Conn()
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel2()
+
+	batch.ExecParams("select $1::text", [][]byte{[]byte("ExecParams 1")}, nil, nil, nil)
+	writeLatency = 2 * time.Second
+	mrr := pgConn.ExecBatch(ctx2, batch)
+	err = mrr.Close()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	require.True(t, pgConn.IsClosed())
+}
+
 func TestConnExecBatchDeferredError(t *testing.T) {
 	t.Parallel()
 
@@ -1556,9 +1636,9 @@ func TestConnOnNotice(t *testing.T) {
 	config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)
 
-	var msg string
-	config.OnNotice = func(c *pgconn.PgConn, notice *pgconn.Notice) {
-		msg = notice.Message
+	var notice *pgconn.Notice
+	config.OnNotice = func(c *pgconn.PgConn, n *pgconn.Notice) {
+		notice = n
 	}
 	config.RuntimeParams["client_min_messages"] = "notice" // Ensure we only get the message we expect.
 
@@ -1576,7 +1656,8 @@ begin
 end$$;`)
 	err = multiResult.Close()
 	require.NoError(t, err)
-	assert.Equal(t, "hello, world", msg)
+	assert.Equal(t, "NOTICE", notice.SeverityUnlocalized)
+	assert.Equal(t, "hello, world", notice.Message)
 
 	ensureConnValid(t, pgConn)
 }
@@ -2049,6 +2130,63 @@ func TestConnCopyFromPrecanceled(t *testing.T) {
 	ensureConnValid(t, pgConn)
 }
 
+// https://github.com/jackc/pgx/issues/2364
+func TestConnCopyFromConnectionTerminated(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	if pgConn.ParameterStatus("crdb_version") != "" {
+		t.Skip("Server does not support pg_terminate_backend")
+	}
+
+	closerConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	time.AfterFunc(500*time.Millisecond, func() {
+		// defer inside of AfterFunc instead of outer test function because outer function can finish while Read is still in
+		// progress which could cause closerConn to be closed too soon.
+		defer closeConn(t, closerConn)
+		err := closerConn.ExecParams(ctx, "select pg_terminate_backend($1)", [][]byte{[]byte(fmt.Sprintf("%d", pgConn.PID()))}, nil, nil, nil).Read().Err
+		require.NoError(t, err)
+	})
+
+	_, err = pgConn.Exec(ctx, `create temporary table foo(
+		a int4,
+		b varchar
+	)`).ReadAll()
+	require.NoError(t, err)
+
+	r, w := io.Pipe()
+	go func() {
+		for i := 0; i < 5_000; i++ {
+			a := strconv.Itoa(i)
+			b := "foo " + a + " bar"
+			_, err := w.Write([]byte(fmt.Sprintf("%s,\"%s\"\n", a, b)))
+			if err != nil {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	copySql := "COPY foo FROM STDIN WITH (FORMAT csv)"
+	ct, err := pgConn.CopyFrom(ctx, r, copySql)
+	assert.Equal(t, int64(0), ct.RowsAffected())
+	assert.Error(t, err)
+
+	assert.True(t, pgConn.IsClosed())
+	select {
+	case <-pgConn.CleanupDone():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connection cleanup exceeded maximum time")
+	}
+}
+
 func TestConnCopyFromGzipReader(t *testing.T) {
 	t.Parallel()
 
@@ -2069,8 +2207,9 @@ func TestConnCopyFromGzipReader(t *testing.T) {
 	)`).ReadAll()
 	require.NoError(t, err)
 
-	f, err := os.CreateTemp("", "*")
+	f, err := os.CreateTemp(t.TempDir(), "*")
 	require.NoError(t, err)
+	defer f.Close()
 
 	gw := gzip.NewWriter(f)
 
@@ -2101,12 +2240,6 @@ func TestConnCopyFromGzipReader(t *testing.T) {
 	assert.Equal(t, int64(len(inputRows)), ct.RowsAffected())
 
 	err = gr.Close()
-	require.NoError(t, err)
-
-	err = f.Close()
-	require.NoError(t, err)
-
-	err = os.Remove(f.Name())
 	require.NoError(t, err)
 
 	result := pgConn.ExecParams(ctx, "select * from foo", nil, nil, nil, nil).Read()
@@ -2680,7 +2813,7 @@ func TestPipelinePrepare(t *testing.T) {
 	sd, ok := results.(*pgconn.StatementDescription)
 	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
 	require.Len(t, sd.Fields, 1)
-	require.Equal(t, string(sd.Fields[0].Name), "a")
+	require.Equal(t, "a", string(sd.Fields[0].Name))
 	require.Equal(t, []uint32{pgtype.Int8OID}, sd.ParamOIDs)
 
 	results, err = pipeline.GetResults()
@@ -2688,7 +2821,7 @@ func TestPipelinePrepare(t *testing.T) {
 	sd, ok = results.(*pgconn.StatementDescription)
 	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
 	require.Len(t, sd.Fields, 1)
-	require.Equal(t, string(sd.Fields[0].Name), "b")
+	require.Equal(t, "b", string(sd.Fields[0].Name))
 	require.Equal(t, []uint32{pgtype.TextOID}, sd.ParamOIDs)
 
 	results, err = pipeline.GetResults()
@@ -2696,7 +2829,7 @@ func TestPipelinePrepare(t *testing.T) {
 	sd, ok = results.(*pgconn.StatementDescription)
 	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
 	require.Len(t, sd.Fields, 1)
-	require.Equal(t, string(sd.Fields[0].Name), "c")
+	require.Equal(t, "c", string(sd.Fields[0].Name))
 	require.Equal(t, []uint32{}, sd.ParamOIDs)
 
 	results, err = pipeline.GetResults()
@@ -2750,7 +2883,7 @@ func TestPipelinePrepareError(t *testing.T) {
 	sd, ok := results.(*pgconn.StatementDescription)
 	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
 	require.Len(t, sd.Fields, 1)
-	require.Equal(t, string(sd.Fields[0].Name), "a")
+	require.Equal(t, "a", string(sd.Fields[0].Name))
 	require.Equal(t, []uint32{pgtype.Int8OID}, sd.ParamOIDs)
 
 	results, err = pipeline.GetResults()
@@ -2794,7 +2927,7 @@ func TestPipelinePrepareAndDeallocate(t *testing.T) {
 	sd, ok := results.(*pgconn.StatementDescription)
 	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
 	require.Len(t, sd.Fields, 1)
-	require.Equal(t, string(sd.Fields[0].Name), "a")
+	require.Equal(t, "a", string(sd.Fields[0].Name))
 	require.Equal(t, []uint32{pgtype.Int8OID}, sd.ParamOIDs)
 
 	results, err = pipeline.GetResults()
@@ -2931,7 +3064,7 @@ func TestPipelinePrepareQuery(t *testing.T) {
 	sd, ok := results.(*pgconn.StatementDescription)
 	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
 	require.Len(t, sd.Fields, 1)
-	require.Equal(t, string(sd.Fields[0].Name), "msg")
+	require.Equal(t, "msg", string(sd.Fields[0].Name))
 	require.Equal(t, []uint32{pgtype.TextOID}, sd.ParamOIDs)
 
 	results, err = pipeline.GetResults()
@@ -3076,6 +3209,344 @@ func TestPipelineQueryErrorBetweenSyncs(t *testing.T) {
 	ensureConnValid(t, pgConn)
 }
 
+func TestPipelineFlushForSingleRequests(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	pipeline := pgConn.StartPipeline(ctx)
+
+	pipeline.SendPrepare("ps", "select $1::text as msg", nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err := pipeline.GetResults()
+	require.NoError(t, err)
+	sd, ok := results.(*pgconn.StatementDescription)
+	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
+	require.Len(t, sd.Fields, 1)
+	require.Equal(t, "msg", string(sd.Fields[0].Name))
+	require.Equal(t, []uint32{pgtype.TextOID}, sd.ParamOIDs)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("hello")}, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok := results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult := rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "hello", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendDeallocate("ps")
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, ok = results.(*pgconn.CloseComplete)
+	require.Truef(t, ok, "expected CloseComplete, got: %#v", results)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryParams(`select 1`, nil, nil, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "1", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	err = pipeline.Sync()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, ok = results.(*pgconn.PipelineSync)
+	require.Truef(t, ok, "expected PipelineSync, got: %#v", results)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	err = pipeline.Close()
+	require.NoError(t, err)
+
+	ensureConnValid(t, pgConn)
+}
+
+func TestPipelineFlushForRequestSeries(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	pipeline := pgConn.StartPipeline(ctx)
+	pipeline.SendPrepare("ps", "select $1::bigint as num", nil)
+	err = pipeline.Sync()
+	require.NoError(t, err)
+
+	results, err := pipeline.GetResults()
+	require.NoError(t, err)
+	sd, ok := results.(*pgconn.StatementDescription)
+	require.Truef(t, ok, "expected StatementDescription, got: %#v", results)
+	require.Len(t, sd.Fields, 1)
+	require.Equal(t, "num", string(sd.Fields[0].Name))
+	require.Equal(t, []uint32{pgtype.Int8OID}, sd.ParamOIDs)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, ok = results.(*pgconn.PipelineSync)
+	require.Truef(t, ok, "expected PipelineSync, got: %#v", results)
+
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("1")}, nil, nil)
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("2")}, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok := results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult := rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "1", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "2", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("3")}, nil, nil)
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("4")}, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "3", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "4", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("5")}, nil, nil)
+	pipeline.SendFlushRequest()
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryPrepared(`ps`, [][]byte{[]byte("6")}, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "5", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "6", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	err = pipeline.Sync()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, ok = results.(*pgconn.PipelineSync)
+	require.Truef(t, ok, "expected PipelineSync, got: %#v", results)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	err = pipeline.Close()
+	require.NoError(t, err)
+
+	ensureConnValid(t, pgConn)
+}
+
+func TestPipelineFlushWithError(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	pipeline := pgConn.StartPipeline(ctx)
+	pipeline.SendQueryParams(`select 1`, nil, nil, nil, nil)
+	pipeline.SendQueryParams(`select 1/(3-n) from generate_series(1,10) n`, nil, nil, nil, nil)
+	pipeline.SendQueryParams(`select 2`, nil, nil, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err := pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok := results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult := rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "1", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, readResult.Err, &pgErr)
+	require.Equal(t, "22012", pgErr.Code)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryParams(`select 3`, nil, nil, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	pipeline.SendQueryParams(`select 4`, nil, nil, nil, nil)
+	pipeline.SendPipelineSync()
+	pipeline.SendQueryParams(`select 5`, nil, nil, nil, nil)
+	pipeline.SendFlushRequest()
+	err = pipeline.Flush()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, ok = results.(*pgconn.PipelineSync)
+	require.Truef(t, ok, "expected PipelineSync, got: %#v", results)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	rr, ok = results.(*pgconn.ResultReader)
+	require.Truef(t, ok, "expected ResultReader, got: %#v", results)
+	readResult = rr.Read()
+	require.NoError(t, readResult.Err)
+	require.Len(t, readResult.Rows, 1)
+	require.Len(t, readResult.Rows[0], 1)
+	require.Equal(t, "5", string(readResult.Rows[0][0]))
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	require.Nil(t, results)
+
+	err = pipeline.Sync()
+	require.NoError(t, err)
+
+	results, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, ok = results.(*pgconn.PipelineSync)
+	require.Truef(t, ok, "expected PipelineSync, got: %#v", results)
+
+	err = pipeline.Close()
+	require.NoError(t, err)
+
+	ensureConnValid(t, pgConn)
+}
+
 func TestPipelineCloseReadsUnreadResults(t *testing.T) {
 	t.Parallel()
 
@@ -3181,6 +3652,22 @@ func TestConnOnPgError(t *testing.T) {
 	_, err = pgConn.Exec(ctx, "select * from non_existant_table").ReadAll()
 	assert.Error(t, err)
 	assert.True(t, pgConn.IsClosed())
+}
+
+func TestConnCustomData(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer closeConn(t, pgConn)
+
+	pgConn.CustomData()["foo"] = "bar"
+	assert.Equal(t, "bar", pgConn.CustomData()["foo"])
+
+	ensureConnValid(t, pgConn)
 }
 
 func Example() {
@@ -3363,9 +3850,9 @@ func TestSNISupport(t *testing.T) {
 					return
 				}
 
-				srv.Write((&pgproto3.AuthenticationOk{}).Encode(nil))
-				srv.Write((&pgproto3.BackendKeyData{ProcessID: 0, SecretKey: 0}).Encode(nil))
-				srv.Write((&pgproto3.ReadyForQuery{TxStatus: 'I'}).Encode(nil))
+				srv.Write(mustEncode((&pgproto3.AuthenticationOk{}).Encode(nil)))
+				srv.Write(mustEncode((&pgproto3.BackendKeyData{ProcessID: 0, SecretKey: 0}).Encode(nil)))
+				srv.Write(mustEncode((&pgproto3.ReadyForQuery{TxStatus: 'I'}).Encode(nil)))
 
 				serverSNINameChan <- sniHost
 			}()
@@ -3377,14 +3864,429 @@ func TestSNISupport(t *testing.T) {
 			select {
 			case sniHost := <-serverSNINameChan:
 				if tt.sni_set {
-					require.Equal(t, sniHost, "localhost")
+					require.Equal(t, "localhost", sniHost)
 				} else {
-					require.Equal(t, sniHost, "")
+					require.Equal(t, "", sniHost)
 				}
 			case err = <-serverErrChan:
 				t.Fatalf("server failed with error: %+v", err)
 			case <-time.After(time.Millisecond * 100):
 				t.Fatal("exceeded connection timeout without erroring out")
+			}
+		})
+	}
+}
+
+func TestConnectWithDirectSSLNegotiation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		connString       string
+		expectDirectNego bool
+	}{
+		{
+			name:             "Default negotiation (postgres)",
+			connString:       "sslmode=require",
+			expectDirectNego: false,
+		},
+		{
+			name:             "Direct negotiation",
+			connString:       "sslmode=require sslnegotiation=direct",
+			expectDirectNego: true,
+		},
+		{
+			name:             "Explicit postgres negotiation",
+			connString:       "sslmode=require sslnegotiation=postgres",
+			expectDirectNego: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			script := &pgmock.Script{
+				Steps: pgmock.AcceptUnauthenticatedConnRequestSteps(),
+			}
+
+			ln, err := net.Listen("tcp", "127.0.0.1:")
+			require.NoError(t, err)
+			defer ln.Close()
+
+			_, port, err := net.SplitHostPort(ln.Addr().String())
+			require.NoError(t, err)
+
+			var directNegoObserved atomic.Bool
+
+			serverErrCh := make(chan error, 1)
+			go func() {
+				defer close(serverErrCh)
+
+				conn, err := ln.Accept()
+				if err != nil {
+					serverErrCh <- fmt.Errorf("accept error: %w", err)
+					return
+				}
+				defer conn.Close()
+
+				conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+				firstByte := make([]byte, 1)
+				_, err = conn.Read(firstByte)
+				if err != nil {
+					serverErrCh <- fmt.Errorf("read first byte error: %w", err)
+					return
+				}
+
+				// Check if TLS Client Hello (direct) or PostgreSQL SSLRequest
+				isDirect := firstByte[0] >= 20 && firstByte[0] <= 23
+				directNegoObserved.Store(isDirect)
+
+				var tlsConn *tls.Conn
+
+				if !isDirect {
+					// Handle standard PostgreSQL SSL negotiation
+					// Read the rest of the SSL request message
+					sslRequestRemainder := make([]byte, 7)
+					_, err = io.ReadFull(conn, sslRequestRemainder)
+					if err != nil {
+						serverErrCh <- fmt.Errorf("read ssl request remainder error: %w", err)
+						return
+					}
+
+					// Send SSL acceptance response
+					_, err = conn.Write([]byte("S"))
+					if err != nil {
+						serverErrCh <- fmt.Errorf("write ssl acceptance error: %w", err)
+						return
+					}
+
+					// Setup TLS server without needing to reuse the first byte
+					cert, err := tls.X509KeyPair([]byte(rsaCertPEM), []byte(rsaKeyPEM))
+					if err != nil {
+						serverErrCh <- fmt.Errorf("cert error: %w", err)
+						return
+					}
+
+					tlsConn = tls.Server(conn, &tls.Config{
+						Certificates: []tls.Certificate{cert},
+					})
+				} else {
+					// Handle direct TLS negotiation
+					// Setup TLS server with the first byte already read
+					cert, err := tls.X509KeyPair([]byte(rsaCertPEM), []byte(rsaKeyPEM))
+					if err != nil {
+						serverErrCh <- fmt.Errorf("cert error: %w", err)
+						return
+					}
+
+					// Use a wrapper to inject the first byte back into the TLS handshake
+					bufConn := &prefixConn{
+						Conn:       conn,
+						prefixData: firstByte,
+					}
+
+					tlsConn = tls.Server(bufConn, &tls.Config{
+						Certificates: []tls.Certificate{cert},
+					})
+				}
+
+				// Complete TLS handshake
+				if err := tlsConn.Handshake(); err != nil {
+					serverErrCh <- fmt.Errorf("TLS handshake error: %w", err)
+					return
+				}
+				defer tlsConn.Close()
+
+				err = script.Run(pgproto3.NewBackend(tlsConn, tlsConn))
+				if err != nil {
+					serverErrCh <- fmt.Errorf("pgmock run error: %w", err)
+					return
+				}
+			}()
+
+			connStr := fmt.Sprintf("%s host=localhost port=%s sslmode=require sslinsecure=1",
+				tt.connString, port)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			conn, err := pgconn.Connect(ctx, connStr)
+
+			require.NoError(t, err)
+
+			defer conn.Close(ctx)
+
+			err = <-serverErrCh
+			require.NoError(t, err)
+
+			require.Equal(t, tt.expectDirectNego, directNegoObserved.Load())
+		})
+	}
+}
+
+// prefixConn implements a net.Conn that prepends some data to the first Read
+type prefixConn struct {
+	net.Conn
+	prefixData     []byte
+	prefixConsumed bool
+}
+
+func (c *prefixConn) Read(b []byte) (n int, err error) {
+	if !c.prefixConsumed && len(c.prefixData) > 0 {
+		n = copy(b, c.prefixData)
+		c.prefixData = c.prefixData[n:]
+		c.prefixConsumed = len(c.prefixData) == 0
+		return n, nil
+	}
+	return c.Conn.Read(b)
+}
+
+// https://github.com/jackc/pgx/issues/1920
+func TestFatalErrorReceivedInPipelineMode(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	steps := pgmock.AcceptUnauthenticatedConnRequestSteps()
+	steps = append(steps, pgmock.ExpectAnyMessage(&pgproto3.Parse{}))
+	steps = append(steps, pgmock.ExpectAnyMessage(&pgproto3.Describe{}))
+	steps = append(steps, pgmock.ExpectAnyMessage(&pgproto3.Parse{}))
+	steps = append(steps, pgmock.ExpectAnyMessage(&pgproto3.Describe{}))
+	steps = append(steps, pgmock.ExpectAnyMessage(&pgproto3.Parse{}))
+	steps = append(steps, pgmock.ExpectAnyMessage(&pgproto3.Describe{}))
+	steps = append(steps, pgmock.SendMessage(&pgproto3.RowDescription{Fields: []pgproto3.FieldDescription{
+		{Name: []byte("mock")},
+	}}))
+	steps = append(steps, pgmock.SendMessage(&pgproto3.ErrorResponse{Severity: "FATAL", Code: "57P01"}))
+	// We shouldn't get anything after the first fatal error. But the reported issue was with PgBouncer so maybe that
+	// causes the issue. Anyway, a FATAL error after the connection had already been killed could cause a panic.
+	steps = append(steps, pgmock.SendMessage(&pgproto3.ErrorResponse{Severity: "FATAL", Code: "57P01"}))
+
+	script := &pgmock.Script{Steps: steps}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	serverKeepAlive := make(chan struct{})
+	defer close(serverKeepAlive)
+
+	serverErrChan := make(chan error, 1)
+	go func() {
+		defer close(serverErrChan)
+
+		conn, err := ln.Accept()
+		if err != nil {
+			serverErrChan <- err
+			return
+		}
+		defer conn.Close()
+
+		err = conn.SetDeadline(time.Now().Add(59 * time.Second))
+		if err != nil {
+			serverErrChan <- err
+			return
+		}
+
+		err = script.Run(pgproto3.NewBackend(conn, conn))
+		if err != nil {
+			serverErrChan <- err
+			return
+		}
+
+		<-serverKeepAlive
+	}()
+
+	parts := strings.Split(ln.Addr().String(), ":")
+	host := parts[0]
+	port := parts[1]
+	connStr := fmt.Sprintf("sslmode=disable host=%s port=%s", host, port)
+
+	ctx, cancel = context.WithTimeout(ctx, 59*time.Second)
+	defer cancel()
+	conn, err := pgconn.Connect(ctx, connStr)
+	require.NoError(t, err)
+
+	pipeline := conn.StartPipeline(ctx)
+	pipeline.SendPrepare("s1", "select 1", nil)
+	pipeline.SendPrepare("s2", "select 2", nil)
+	pipeline.SendPrepare("s3", "select 3", nil)
+	err = pipeline.Sync()
+	require.NoError(t, err)
+
+	_, err = pipeline.GetResults()
+	require.NoError(t, err)
+	_, err = pipeline.GetResults()
+	require.Error(t, err)
+
+	err = pipeline.Close()
+	require.Error(t, err)
+}
+
+func mustEncode(buf []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return buf
+}
+
+func TestDeadlineContextWatcherHandler(t *testing.T) {
+	t.Parallel()
+
+	t.Run("DeadlineExceeded with zero DeadlineDelay", func(t *testing.T) {
+		config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		require.NoError(t, err)
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			return &pgconn.DeadlineContextWatcherHandler{Conn: conn.Conn()}
+		}
+		config.ConnectTimeout = 5 * time.Second
+
+		pgConn, err := pgconn.ConnectConfig(context.Background(), config)
+		require.NoError(t, err)
+		defer closeConn(t, pgConn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err = pgConn.Exec(ctx, "select 1, pg_sleep(1)").ReadAll()
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.True(t, pgConn.IsClosed())
+	})
+
+	t.Run("DeadlineExceeded with DeadlineDelay", func(t *testing.T) {
+		config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		require.NoError(t, err)
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			return &pgconn.DeadlineContextWatcherHandler{Conn: conn.Conn(), DeadlineDelay: 500 * time.Millisecond}
+		}
+		config.ConnectTimeout = 5 * time.Second
+
+		pgConn, err := pgconn.ConnectConfig(context.Background(), config)
+		require.NoError(t, err)
+		defer closeConn(t, pgConn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		_, err = pgConn.Exec(ctx, "select 1, pg_sleep(0.250)").ReadAll()
+		require.NoError(t, err)
+
+		ensureConnValid(t, pgConn)
+	})
+}
+
+func TestCancelRequestContextWatcherHandler(t *testing.T) {
+	t.Parallel()
+
+	t.Run("DeadlineExceeded cancels request after CancelRequestDelay", func(t *testing.T) {
+		config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		require.NoError(t, err)
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			return &pgconn.CancelRequestContextWatcherHandler{
+				Conn:               conn,
+				CancelRequestDelay: 250 * time.Millisecond,
+				DeadlineDelay:      5000 * time.Millisecond,
+			}
+		}
+		config.ConnectTimeout = 5 * time.Second
+
+		pgConn, err := pgconn.ConnectConfig(context.Background(), config)
+		require.NoError(t, err)
+		defer closeConn(t, pgConn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err = pgConn.Exec(ctx, "select 1, pg_sleep(3)").ReadAll()
+		require.Error(t, err)
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+
+		ensureConnValid(t, pgConn)
+	})
+
+	t.Run("DeadlineExceeded - do not send cancel request when query finishes in grace period", func(t *testing.T) {
+		config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		require.NoError(t, err)
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			return &pgconn.CancelRequestContextWatcherHandler{
+				Conn:               conn,
+				CancelRequestDelay: 1000 * time.Millisecond,
+				DeadlineDelay:      5000 * time.Millisecond,
+			}
+		}
+		config.ConnectTimeout = 5 * time.Second
+
+		pgConn, err := pgconn.ConnectConfig(context.Background(), config)
+		require.NoError(t, err)
+		defer closeConn(t, pgConn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		_, err = pgConn.Exec(ctx, "select 1, pg_sleep(0.250)").ReadAll()
+		require.NoError(t, err)
+
+		ensureConnValid(t, pgConn)
+	})
+
+	t.Run("DeadlineExceeded sets conn deadline with DeadlineDelay", func(t *testing.T) {
+		config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+		require.NoError(t, err)
+		config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+			return &pgconn.CancelRequestContextWatcherHandler{
+				Conn:               conn,
+				CancelRequestDelay: 5000 * time.Millisecond, // purposely setting this higher than DeadlineDelay to ensure the cancel request never happens.
+				DeadlineDelay:      250 * time.Millisecond,
+			}
+		}
+		config.ConnectTimeout = 5 * time.Second
+
+		pgConn, err := pgconn.ConnectConfig(context.Background(), config)
+		require.NoError(t, err)
+		defer closeConn(t, pgConn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		_, err = pgConn.Exec(ctx, "select 1, pg_sleep(1)").ReadAll()
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.True(t, pgConn.IsClosed())
+	})
+
+	for i := 0; i < 10; i++ {
+		t.Run(fmt.Sprintf("Stress %d", i), func(t *testing.T) {
+			t.Parallel()
+
+			config, err := pgconn.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+			require.NoError(t, err)
+			config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+				return &pgconn.CancelRequestContextWatcherHandler{
+					Conn:               conn,
+					CancelRequestDelay: 5 * time.Millisecond,
+					DeadlineDelay:      1000 * time.Millisecond,
+				}
+			}
+			config.ConnectTimeout = 5 * time.Second
+
+			pgConn, err := pgconn.ConnectConfig(context.Background(), config)
+			require.NoError(t, err)
+			defer closeConn(t, pgConn)
+
+			for i := 0; i < 20; i++ {
+				func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 4*time.Millisecond)
+					defer cancel()
+					pgConn.Exec(ctx, "select 1, pg_sleep(0.010)").ReadAll()
+					time.Sleep(100 * time.Millisecond) // ensure a cancel request that was a little late doesn't interrupt ensureConnValid.
+					ensureConnValid(t, pgConn)
+				}()
 			}
 		})
 	}

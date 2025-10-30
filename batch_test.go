@@ -290,6 +290,45 @@ func TestConnSendBatchMany(t *testing.T) {
 	})
 }
 
+// https://github.com/jackc/pgx/issues/1801#issuecomment-2203784178
+func TestConnSendBatchReadResultsWhenNothingQueued(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		batch := &pgx.Batch{}
+		br := conn.SendBatch(ctx, batch)
+		commandTag, err := br.Exec()
+		require.Equal(t, "", commandTag.String())
+		require.EqualError(t, err, "no more results in batch")
+		err = br.Close()
+		require.NoError(t, err)
+	})
+}
+
+func TestConnSendBatchReadMoreResultsThanQueriesSent(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		batch := &pgx.Batch{}
+		batch.Queue("select 1")
+		br := conn.SendBatch(ctx, batch)
+		commandTag, err := br.Exec()
+		require.Equal(t, "SELECT 1", commandTag.String())
+		require.NoError(t, err)
+		commandTag, err = br.Exec()
+		require.Equal(t, "", commandTag.String())
+		require.EqualError(t, err, "no more results in batch")
+		err = br.Close()
+		require.NoError(t, err)
+	})
+}
+
 func TestConnSendBatchWithPreparedStatement(t *testing.T) {
 	t.Parallel()
 
@@ -449,7 +488,10 @@ func TestConnSendBatchCloseRowsPartiallyRead(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+<<<<<<< HEAD
 
+=======
+>>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 		batch := &pgx.Batch{}
 		batch.Queue("select n from generate_series(0,5) n")
 		batch.Queue("select n from generate_series(0,5) n")
@@ -500,7 +542,6 @@ func TestConnSendBatchCloseRowsPartiallyRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
 	})
 }
 
@@ -511,7 +552,6 @@ func TestConnSendBatchQueryError(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		batch := &pgx.Batch{}
 		batch.Queue("select n from generate_series(0,5) n where 100/(5-n) > 0")
 		batch.Queue("select n from generate_series(0,5) n")
@@ -541,7 +581,6 @@ func TestConnSendBatchQueryError(t *testing.T) {
 		if pgErr, ok := err.(*pgconn.PgError); !(ok && pgErr.Code == "22012") {
 			t.Errorf("br.Close() => %v, want error code %v", err, 22012)
 		}
-
 	})
 }
 
@@ -552,7 +591,6 @@ func TestConnSendBatchQuerySyntaxError(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		batch := &pgx.Batch{}
 		batch.Queue("select 1 1")
 
@@ -568,7 +606,6 @@ func TestConnSendBatchQuerySyntaxError(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error")
 		}
-
 	})
 }
 
@@ -579,7 +616,6 @@ func TestConnSendBatchQueryRowInsert(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		sql := `create temporary table ledger(
 	  id serial primary key,
 	  description varchar not null,
@@ -608,7 +644,6 @@ func TestConnSendBatchQueryRowInsert(t *testing.T) {
 		}
 
 		br.Close()
-
 	})
 }
 
@@ -619,7 +654,6 @@ func TestConnSendBatchQueryPartialReadInsert(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		sql := `create temporary table ledger(
 	  id serial primary key,
 	  description varchar not null,
@@ -648,7 +682,6 @@ func TestConnSendBatchQueryPartialReadInsert(t *testing.T) {
 		}
 
 		br.Close()
-
 	})
 }
 
@@ -659,7 +692,6 @@ func TestTxSendBatch(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		sql := `create temporary table ledger1(
 	  id serial primary key,
 	  description varchar not null
@@ -718,7 +750,6 @@ func TestTxSendBatch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
 	})
 }
 
@@ -729,7 +760,6 @@ func TestTxSendBatchRollback(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		sql := `create temporary table ledger1(
 	  id serial primary key,
 	  description varchar not null
@@ -756,7 +786,6 @@ func TestTxSendBatchRollback(t *testing.T) {
 		if count != 0 {
 			t.Errorf("count => %v, want %v", count, 0)
 		}
-
 	})
 }
 
@@ -816,7 +845,6 @@ func TestConnBeginBatchDeferredError(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		pgxtest.SkipCockroachDB(t, conn, "Server does not support deferred constraint (https://github.com/cockroachdb/cockroach/issues/31632)")
 
 		mustExec(t, conn, `create temporary table t (
@@ -855,7 +883,6 @@ func TestConnBeginBatchDeferredError(t *testing.T) {
 		if err, ok := err.(*pgconn.PgError); !ok || err.Code != "23505" {
 			t.Fatalf("expected error 23505, got %v", err)
 		}
-
 	})
 }
 
@@ -967,6 +994,36 @@ func TestSendBatchSimpleProtocol(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, 3, values[0])
 	assert.False(t, rows.Next())
+}
+
+// https://github.com/jackc/pgx/issues/1847#issuecomment-2347858887
+func TestConnSendBatchErrorDoesNotLeaveOrphanedPreparedStatement(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		pgxtest.SkipCockroachDB(t, conn, "Server serial type is incompatible with test")
+
+		mustExec(t, conn, `create temporary table foo(col1 text primary key);`)
+
+		batch := &pgx.Batch{}
+		batch.Queue("select col1 from foo")
+		batch.Queue("select col1 from baz")
+		err := conn.SendBatch(ctx, batch).Close()
+		require.EqualError(t, err, `ERROR: relation "baz" does not exist (SQLSTATE 42P01)`)
+
+		mustExec(t, conn, `create temporary table baz(col1 text primary key);`)
+
+		// Since table baz now exists, the batch should succeed.
+
+		batch = &pgx.Batch{}
+		batch.Queue("select col1 from foo")
+		batch.Queue("select col1 from baz")
+		err = conn.SendBatch(ctx, batch).Close()
+		require.NoError(t, err)
+	})
 }
 
 func ExampleConn_SendBatch() {
