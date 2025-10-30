@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 
 	"github.com/yugabyte/pgx/v5/internal/pgio"
 )

@@ -77,11 +77,11 @@ func (src *StartupMessage) Encode(dst []byte) ([]byte, error) {
 	}
 	dst = append(dst, 0)
 
-<<<<<<< HEAD
-	pgio.SetInt32(dst[sp:], int32(len(dst[sp:])))
+	return finishMessage(dst, sp)
+}
 
-	return dst
 // MarshalJSON implements encoding/json.Marshaler.
+func (src StartupMessage) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type            string
 		ProtocolVersion uint32

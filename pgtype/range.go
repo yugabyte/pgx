@@ -275,10 +275,6 @@ func parseUntypedBinaryRange(src []byte) (*untypedBinaryRange, error) {
 	}
 
 	return ubr, nil
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 }
 
 // Range is a generic range type.

@@ -32,10 +32,6 @@ type ConnConfig struct {
 	// query exec mode.
 	StatementCacheCapacity int
 
-	// StatementCacheCapacity is maximum size of the statement cache used when executing a query with "cache_statement"
-	// query exec mode.
-	StatementCacheCapacity int
-
 	// DescriptionCacheCapacity is the maximum size of the description cache used when executing a query with
 	// "cache_describe" query exec mode.
 	DescriptionCacheCapacity int
@@ -53,11 +49,6 @@ type ConnConfig struct {
 	refreshInterval              int64
 	fallbackToTopologyKeysOnly   bool
 	failedHostReconnectDelaySecs int64
-}
-
-// ParseConfigOptions contains options that control how a config is built such as getsslpassword.
-type ParseConfigOptions struct {
-	pgconn.ParseConfigOptions
 }
 
 // ParseConfigOptions contains options that control how a config is built such as getsslpassword.
@@ -101,6 +92,8 @@ type Conn struct {
 
 	wbuf []byte
 	eqb  ExtendedQueryBuilder
+
+	closeCntUpdated bool
 }
 
 // Identifier a PostgreSQL identifier or name. Identifiers can be composed of
@@ -171,16 +164,6 @@ func ConnectWithOptions(ctx context.Context, connString string, options ParseCon
 	} else {
 		return connect(ctx, connConfig)
 	}
-}
-
-// ConnectWithOptions behaves exactly like Connect with the addition of options. At the present options is only used to
-// provide a GetSSLPassword function.
-func ConnectWithOptions(ctx context.Context, connString string, options ParseConfigOptions) (*Conn, error) {
-	connConfig, err := ParseConfigWithOptions(connString, options)
-	if err != nil {
-		return nil, err
-	}
-	return connect(ctx, connConfig)
 }
 
 // ConnectConfig establishes a connection with a PostgreSQL server with a configuration struct.
@@ -256,7 +239,6 @@ func ParseConfigWithOptions(connString string, options ParseConfigOptions) (*Con
 		} else {
 			return nil, err
 		}
-		descriptionCacheCapacity = int(n)
 	}
 
 	refreshInterval := int64(REFRESH_INTERVAL_SECONDS)
@@ -290,6 +272,8 @@ func ParseConfigWithOptions(connString string, options ParseConfigOptions) (*Con
 			}
 		} else {
 			return nil, pgconn.NewParseConfigError(connString, "invalid failed_host_reconnect_delay_secs", err)
+		}
+	}
 
 	defaultQueryExecMode := QueryExecModeCacheStatement
 	if s, ok := config.RuntimeParams["default_query_exec_mode"]; ok {

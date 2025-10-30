@@ -204,10 +204,6 @@ func (encodePlanBoolCodecTextBool) Encode(value any, buf []byte) (newBuf []byte,
 }
 
 func (BoolCodec) PlanScan(m *Map, oid uint32, format int16, target any) ScanPlan {
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 	switch format {
 	case BinaryFormatCode:
 		switch target.(type) {
@@ -335,11 +331,7 @@ func (scanPlanTextAnyToBoolScanner) Scan(src []byte, dst any) error {
 	return s.ScanBool(Bool{Bool: v, Valid: true})
 }
 
-<<<<<<< HEAD
-// https://www.postgresql.org/docs/11/datatype-boolean.html
-=======
 // https://www.postgresql.org/docs/current/datatype-boolean.html
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 func planTextToBool(src []byte) (bool, error) {
 	s := string(bytes.ToLower(bytes.TrimSpace(src)))
 

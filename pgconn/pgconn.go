@@ -19,8 +19,8 @@ import (
 
 	"github.com/yugabyte/pgx/v5/internal/iobufpool"
 	"github.com/yugabyte/pgx/v5/internal/pgio"
+	"github.com/yugabyte/pgx/v5/pgconn/ctxwatch"
 	"github.com/yugabyte/pgx/v5/pgconn/internal/bgreader"
-	"github.com/yugabyte/pgx/v5/pgconn/internal/ctxwatch"
 	"github.com/yugabyte/pgx/v5/pgproto3"
 )
 

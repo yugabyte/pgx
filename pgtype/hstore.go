@@ -164,10 +164,6 @@ func (encodePlanHstoreCodecText) Encode(value any, buf []byte) (newBuf []byte, e
 }
 
 func (HstoreCodec) PlanScan(m *Map, oid uint32, format int16, target any) ScanPlan {
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 	switch format {
 	case BinaryFormatCode:
 		switch target.(type) {

@@ -25,7 +25,10 @@ type Line struct {
 }
 
 // ScanLine implements the [LineScanner] interface.
+func (line *Line) ScanLine(v Line) error {
+	*line = v
 	return nil
+}
 
 // LineValue implements the [LineValuer] interface.
 func (line Line) LineValue() (Line, error) {
@@ -128,10 +131,6 @@ func (encodePlanLineCodecText) Encode(value any, buf []byte) (newBuf []byte, err
 }
 
 func (LineCodec) PlanScan(m *Map, oid uint32, format int16, target any) ScanPlan {
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 	switch format {
 	case BinaryFormatCode:
 		switch target.(type) {

@@ -70,9 +70,10 @@ func (src *Parse) Encode(dst []byte) ([]byte, error) {
 		dst = pgio.AppendUint32(dst, oid)
 	}
 
-<<<<<<< HEAD
-	pgio.SetInt32(dst[sp:], int32(len(dst[sp:])))
+	return finishMessage(dst, sp)
+}
 
+// MarshalJSON implements encoding/json.Marshaler.
 func (src Parse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type          string

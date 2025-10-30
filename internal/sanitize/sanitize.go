@@ -431,17 +431,10 @@ var queryPool = &pool[*Query]{
 // as necessary. This function is only safe when standard_conforming_strings is
 // on.
 func SanitizeSQL(sql string, args ...any) (string, error) {
-<<<<<<< HEAD
-	query, err := NewQuery(sql)
-	if err != nil {
-		return "", err
-	}
-=======
 	query := queryPool.get()
 	query.init(sql)
 	defer queryPool.put(query)
 
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 	return query.Sanitize(args...)
 }
 

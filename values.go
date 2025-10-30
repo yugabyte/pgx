@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/yugabyte/pgx/v5/pgtype"
-	"github.com/yugabyte/pgx/v5/internal/anynil"
 	"github.com/yugabyte/pgx/v5/internal/pgio"
 )
 
