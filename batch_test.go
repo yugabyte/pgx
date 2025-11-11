@@ -488,10 +488,6 @@ func TestConnSendBatchCloseRowsPartiallyRead(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 		batch := &pgx.Batch{}
 		batch.Queue("select n from generate_series(0,5) n")
 		batch.Queue("select n from generate_series(0,5) n")

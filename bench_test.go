@@ -614,9 +614,6 @@ func BenchmarkWrite5RowsViaInsert(b *testing.B) {
 func BenchmarkWrite5RowsViaMultiInsert(b *testing.B) {
 	benchmarkWriteNRowsViaMultiInsert(b, 5)
 }
-func BenchmarkWrite5RowsViaBatchInsert(b *testing.B) {
-	benchmarkWriteNRowsViaBatchInsert(b, 5)
-}
 
 func BenchmarkWrite5RowsViaBatchInsert(b *testing.B) {
 	benchmarkWriteNRowsViaBatchInsert(b, 5)
@@ -633,9 +630,6 @@ func BenchmarkWrite10RowsViaInsert(b *testing.B) {
 func BenchmarkWrite10RowsViaMultiInsert(b *testing.B) {
 	benchmarkWriteNRowsViaMultiInsert(b, 10)
 }
-func BenchmarkWrite10RowsViaBatchInsert(b *testing.B) {
-	benchmarkWriteNRowsViaBatchInsert(b, 10)
-}
 
 func BenchmarkWrite10RowsViaBatchInsert(b *testing.B) {
 	benchmarkWriteNRowsViaBatchInsert(b, 10)
@@ -651,9 +645,6 @@ func BenchmarkWrite100RowsViaInsert(b *testing.B) {
 
 func BenchmarkWrite100RowsViaMultiInsert(b *testing.B) {
 	benchmarkWriteNRowsViaMultiInsert(b, 100)
-}
-func BenchmarkWrite100RowsViaBatchInsert(b *testing.B) {
-	benchmarkWriteNRowsViaBatchInsert(b, 100)
 }
 
 func BenchmarkWrite100RowsViaBatchInsert(b *testing.B) {
@@ -686,9 +677,6 @@ func BenchmarkWrite10000RowsViaInsert(b *testing.B) {
 
 func BenchmarkWrite10000RowsViaMultiInsert(b *testing.B) {
 	benchmarkWriteNRowsViaMultiInsert(b, 10000)
-}
-func BenchmarkWrite10000RowsViaBatchInsert(b *testing.B) {
-	benchmarkWriteNRowsViaBatchInsert(b, 10000)
 }
 
 func BenchmarkWrite10000RowsViaBatchInsert(b *testing.B) {

@@ -2207,10 +2207,6 @@ insert into products (name, price) values
 	}
 
 	rows, err := conn.Query(ctx, "select name, price from products where price < $1 order by price desc", 12)
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 	// It is unnecessary to check err. If an error occurred it will be returned by rows.Err() later. But in rare
 	// cases it may be useful to detect the error as early as possible.
 	if err != nil {

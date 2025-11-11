@@ -1540,8 +1540,6 @@ func TestConnDeallocateInvalidatedCachedStatementsWhenCanceled(t *testing.T) {
 		require.EqualValues(t, 1, n)
 	})
 }
-<<<<<<< HEAD
-=======
 
 // https://github.com/jackc/pgx/issues/1847
 func TestConnDeallocateInvalidatedCachedStatementsInTransactionWithBatch(t *testing.T) {
@@ -1590,4 +1588,3 @@ func TestErrNoRows(t *testing.T) {
 
 	require.ErrorIs(t, pgx.ErrNoRows, sql.ErrNoRows, "pgx.ErrNowRows must match sql.ErrNoRows")
 }
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
