@@ -173,7 +173,7 @@ func ConnectConfig(ctx context.Context, connConfig *ConnConfig) (*Conn, error) {
 	// connections with the same config. See https://github.com/jackc/pgx/issues/618.
 	connConfig = connConfig.Copy()
 
-	if connConfig.loadBalance != "false" {
+	if connConfig.loadBalance != "false" && connConfig.loadBalance != "" {
 		return connectLoadBalanced(ctx, connConfig)
 	} else {
 		return connect(ctx, connConfig)
