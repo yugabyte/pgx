@@ -110,10 +110,7 @@ import (
 	"fmt"
 	"os"
 
-<<<<<<< HEAD
 	"github.com/yugabyte/pgx/v5"
-=======
-	"github.com/jackc/pgx/v5"
 )
 	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -147,10 +144,6 @@ See the [getting started guide](https://github.com/jackc/pgx/wiki/Getting-starte
 * `COPY` protocol support for faster bulk data loads
 * Tracing and logging support
 * Connection pool with after-connect hook for arbitrary connection setup
-<<<<<<< HEAD
-=======
-* `LISTEN` / `NOTIFY`
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 * Conversion of PostgreSQL arrays to Go slice mappings for integers, floats, and strings
 * `hstore` support
 * `json` and `jsonb` support
@@ -163,12 +156,7 @@ See the [getting started guide](https://github.com/jackc/pgx/wiki/Getting-starte
 
 ## Choosing Between the pgx and database/sql Interfaces
 
-<<<<<<< HEAD
 The pgx interface is faster.
-=======
-The pgx interface is faster. Many PostgreSQL specific features such as `LISTEN` / `NOTIFY` and `COPY` are not available
-through the `database/sql` interface.
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 
 The pgx interface is recommended when:
 
@@ -179,11 +167,7 @@ It is also possible to use the `database/sql` interface and convert a connection
 
 ## Testing
 
-<<<<<<< HEAD
-See CONTRIBUTING.md for setup instructions.
-=======
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions.
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 
 ## Architecture
 
@@ -191,11 +175,7 @@ See the presentation at Golang Estonia, [PGX Top to Bottom](https://www.youtube.
 
 ## Supported Go and PostgreSQL Versions
 
-<<<<<<< HEAD
-pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.20 and higher and PostgreSQL 12 and higher.
-=======
-pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.23 and higher and PostgreSQL 13 and higher. pgx also is tested against the latest version of [CockroachDB](https://www.cockroachlabs.com/product/).
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
+pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.23 and higher and PostgreSQL 13 and higher.
 
 ## Version Policy
 
@@ -207,11 +187,7 @@ pgx follows semantic versioning for the documented public API on stable releases
 
 pglogrepl provides functionality to act as a client for PostgreSQL logical replication.
 
-<<<<<<< HEAD
-pgx supports the same versions of Go and PostgreSQL that are supported by their respective teams. For [Go](https://golang.org/doc/devel/release.html#policy) that is the two most recent major releases and for [PostgreSQL](https://www.postgresql.org/support/versioning/) the major releases in the last 5 years. This means pgx supports Go 1.16 and higher and PostgreSQL 10 and higher.
-=======
 ### [github.com/jackc/pgmock](https://github.com/jackc/pgmock)
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 
 pgmock offers the ability to create a server that mocks the PostgreSQL wire protocol. This is used internally to test pgx by purposely inducing unusual errors. pgproto3 and pgmock together provide most of the foundational tooling required to implement a PostgreSQL proxy or MitM (such as for a custom connection pooler).
 
@@ -225,14 +201,6 @@ pgerrcode contains constants for the PostgreSQL error codes.
 
 ## Adapters for 3rd Party Types
 
-<<<<<<< HEAD
-### [github.com/yugabyte/pgx/v4/pgxpool](https://github.com/yugabyte/pgx/tree/master/pgxpool)
-
-
-### [github.com/yugabyte/pgx/v4/stdlib](https://github.com/yugabyte/pgx/tree/master/stdlib)
-
-* [https://github.com/jackhopner/pgx-xray-tracer](https://github.com/jackhopner/pgx-xray-tracer)
-=======
 * [github.com/jackc/pgx-gofrs-uuid](https://github.com/jackc/pgx-gofrs-uuid)
 * [github.com/jackc/pgx-shopspring-decimal](https://github.com/jackc/pgx-shopspring-decimal)
 * [github.com/twpayne/pgx-geos](https://github.com/twpayne/pgx-geos) ([PostGIS](https://postgis.net/) and [GEOS](https://libgeos.org/) via [go-geos](https://github.com/twpayne/go-geos))
@@ -243,7 +211,6 @@ pgerrcode contains constants for the PostgreSQL error codes.
 
 * [github.com/jackhopner/pgx-xray-tracer](https://github.com/jackhopner/pgx-xray-tracer)
 * [github.com/exaring/otelpgx](https://github.com/exaring/otelpgx)
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 
 ## Adapters for 3rd Party Loggers
 
@@ -273,11 +240,7 @@ Library for scanning data from a database into Go structs and more.
 A carefully designed SQL client for making using SQL easier,
 more productive, and less error-prone on Golang.
 
-<<<<<<< HEAD
-### [https://github.com/otan/gopgkrb5](https://github.com/otan/gopgkrb5)
-=======
 ### [github.com/otan/gopgkrb5](https://github.com/otan/gopgkrb5)
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 
 Adds GSSAPI / Kerberos authentication support.
 
@@ -290,11 +253,6 @@ Explicit data mapping and scanning library for Go structs and slices.
 Type safe and flexible package for scanning database data into Go types.
 Supports, structs, maps, slices and custom mapping functions.
 
-<<<<<<< HEAD
-### [https://github.com/z0ne-dev/mgx](https://github.com/z0ne-dev/mgx)
-
-Code first migration library for native pgx (no database/sql abstraction).
-=======
 ### [github.com/z0ne-dev/mgx](https://github.com/z0ne-dev/mgx)
 
 Code first migration library for native pgx (no database/sql abstraction).
@@ -314,4 +272,3 @@ Simplifies working with the pgx library, providing convenient scanning of nested
 ## [https://github.com/KoNekoD/pgx-colon-query-rewriter](https://github.com/KoNekoD/pgx-colon-query-rewriter)
 
 Implementation of the pgx query rewriter to use ':' instead of '@' in named query parameters.
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e

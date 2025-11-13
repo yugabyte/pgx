@@ -133,10 +133,6 @@ func TestParseConfig(t *testing.T) {
 			name:       "sslmode prefer",
 			connString: "postgres://jack:secret@localhost:5432/mydb?sslmode=prefer",
 			config: &pgconn.Config{
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 				User:     "jack",
 				Password: "secret",
 				Host:     "localhost",

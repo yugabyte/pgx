@@ -1193,28 +1193,6 @@ func TestConnectEagerlyReachesMinPoolSize(t *testing.T) {
 
 	config.MinConns = int32(12)
 	config.MaxConns = int32(15)
-<<<<<<< HEAD
-
-	acquireAttempts := int64(0)
-	connectAttempts := int64(0)
-
-	config.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
-		atomic.AddInt64(&acquireAttempts, 1)
-		return true
-	}
-	config.BeforeConnect = func(ctx context.Context, cfg *pgx.ConnConfig) error {
-		atomic.AddInt64(&connectAttempts, 1)
-		return nil
-	}
-
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	require.NoError(t, err)
-	defer pool.Close()
-
-	for i := 0; i < 500; i++ {
-		time.Sleep(10 * time.Millisecond)
-
-=======
 
 	acquireAttempts := int64(0)
 	connectAttempts := int64(0)
@@ -1235,7 +1213,6 @@ func TestConnectEagerlyReachesMinPoolSize(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		time.Sleep(10 * time.Millisecond)
 
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 		stat := pool.Stat()
 		if stat.IdleConns() == 12 && stat.AcquireCount() == 0 && stat.TotalConns() == 12 && atomic.LoadInt64(&acquireAttempts) == 0 && atomic.LoadInt64(&connectAttempts) == 12 {
 			return
@@ -1243,10 +1220,6 @@ func TestConnectEagerlyReachesMinPoolSize(t *testing.T) {
 	}
 
 	t.Fatal("did not reach min pool size")
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 }
 
 func TestPoolSendBatchBatchCloseTwice(t *testing.T) {

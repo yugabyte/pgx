@@ -161,10 +161,6 @@ func writeEncryptedPrivateKey(path string, privateKey *rsa.PrivateKey, password 
 	}
 
 	return nil
-<<<<<<< HEAD
-
-=======
->>>>>>> a2fca037434a0a7096b095d4ed87cdffb03b626e
 }
 
 func writeCertificate(path string, certBytes []byte) error {
