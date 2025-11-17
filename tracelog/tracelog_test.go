@@ -6,14 +6,17 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgxpool"
 	"github.com/yugabyte/pgx/v5/pgxtest"
 	"github.com/yugabyte/pgx/v5/tracelog"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 var defaultConnTestRunner pgxtest.ConnTestRunner
@@ -35,18 +38,29 @@ type testLog struct {
 
 type testLogger struct {
 	logs []testLog
+
+	mux sync.Mutex
 }
 
 func (l *testLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+	l.mux.Lock()
+	defer l.mux.Unlock()
+
 	data["ctxdata"] = ctx.Value("ctxdata")
 	l.logs = append(l.logs, testLog{lvl: level, msg: msg, data: data})
 }
 
 func (l *testLogger) Clear() {
+	l.mux.Lock()
+	defer l.mux.Unlock()
+
 	l.logs = l.logs[0:0]
 }
 
 func (l *testLogger) FilterByMsg(msg string) (res []testLog) {
+	l.mux.Lock()
+	defer l.mux.Unlock()
+
 	for _, log := range l.logs {
 		if log.msg == msg {
 			res = append(res, log)
@@ -348,7 +362,6 @@ func TestLogBatchStatementsOnExec(t *testing.T) {
 		assert.Equal(t, "BatchQuery", logger.logs[1].msg)
 		assert.Equal(t, "drop table foo", logger.logs[1].data["sql"])
 		assert.Equal(t, "BatchClose", logger.logs[2].msg)
-
 	})
 }
 
@@ -389,6 +402,88 @@ func TestLogBatchStatementsOnBatchResultClose(t *testing.T) {
 		assert.Equal(t, "select 1 = 1;", logger.logs[1].data["sql"])
 		assert.Equal(t, "BatchClose", logger.logs[2].msg)
 	})
+}
+
+func TestLogAcquire(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	logger := &testLogger{}
+	tracer := &tracelog.TraceLog{
+		Logger:   logger,
+		LogLevel: tracelog.LogLevelTrace,
+	}
+
+	config := defaultConnTestRunner.CreateConfig(ctx, t)
+	config.Tracer = tracer
+
+	poolConfig, err := pgxpool.ParseConfig(config.ConnString())
+	require.NoError(t, err)
+
+	poolConfig.ConnConfig = config
+	pool1, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	require.NoError(t, err)
+	defer pool1.Close()
+
+	conn1, err := pool1.Acquire(ctx)
+	require.NoError(t, err)
+	defer conn1.Release()
+	require.Len(t, logger.logs, 2) // Has both the Connect and Acquire logs
+	require.Equal(t, "Acquire", logger.logs[1].msg)
+	require.Equal(t, tracelog.LogLevelDebug, logger.logs[1].lvl)
+
+	logger.Clear()
+
+	// create a 2nd pool with a bad host to verify the error handling
+	poolConfig, err = pgxpool.ParseConfig("host=/invalid")
+	require.NoError(t, err)
+	poolConfig.ConnConfig.Tracer = tracer
+
+	pool2, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	require.NoError(t, err)
+	defer pool2.Close()
+
+	conn2, err := pool2.Acquire(ctx)
+	require.Error(t, err)
+	require.Nil(t, conn2)
+	require.Len(t, logger.logs, 2)
+	require.Equal(t, "Acquire", logger.logs[1].msg)
+	require.Equal(t, tracelog.LogLevelError, logger.logs[1].lvl)
+}
+
+func TestLogRelease(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	logger := &testLogger{}
+	tracer := &tracelog.TraceLog{
+		Logger:   logger,
+		LogLevel: tracelog.LogLevelTrace,
+	}
+
+	config := defaultConnTestRunner.CreateConfig(ctx, t)
+	config.Tracer = tracer
+
+	poolConfig, err := pgxpool.ParseConfig(config.ConnString())
+	require.NoError(t, err)
+
+	poolConfig.ConnConfig = config
+	pool1, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	require.NoError(t, err)
+	defer pool1.Close()
+
+	conn1, err := pool1.Acquire(ctx)
+	require.NoError(t, err)
+
+	logger.Clear()
+	conn1.Release()
+	require.Len(t, logger.logs, 1)
+	require.Equal(t, "Release", logger.logs[0].msg)
+	require.Equal(t, tracelog.LogLevelDebug, logger.logs[0].lvl)
 }
 
 func TestLogPrepare(t *testing.T) {
@@ -456,4 +551,43 @@ func TestLogPrepare(t *testing.T) {
 		require.Equal(t, "Prepare", logger.logs[0].msg)
 		require.Equal(t, err, logger.logs[0].data["err"])
 	})
+}
+
+// https://github.com/jackc/pgx/pull/2120
+func TestConcurrentUsage(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	logger := &testLogger{}
+	tracer := &tracelog.TraceLog{
+		Logger:   logger,
+		LogLevel: tracelog.LogLevelTrace,
+	}
+
+	config, err := pgxpool.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	config.ConnConfig.Tracer = tracer
+
+	for i := 0; i < 50; i++ {
+		func() {
+			pool, err := pgxpool.NewWithConfig(ctx, config)
+			require.NoError(t, err)
+
+			defer pool.Close()
+
+			eg := errgroup.Group{}
+
+			for i := 0; i < 5; i++ {
+				eg.Go(func() error {
+					_, err := pool.Exec(ctx, `select 1`)
+					return err
+				})
+			}
+
+			err = eg.Wait()
+			require.NoError(t, err)
+		}()
+	}
 }

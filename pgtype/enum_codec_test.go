@@ -10,7 +10,6 @@ import (
 
 func TestEnumCodec(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop type if exists enum_test;
 
 create type enum_test as enum ('foo', 'bar', 'baz');`)
@@ -47,7 +46,6 @@ create type enum_test as enum ('foo', 'bar', 'baz');`)
 
 func TestEnumCodecValues(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
-
 		_, err := conn.Exec(ctx, `drop type if exists enum_test;
 
 create type enum_test as enum ('foo', 'bar', 'baz');`)
@@ -64,6 +62,6 @@ create type enum_test as enum ('foo', 'bar', 'baz');`)
 		require.True(t, rows.Next())
 		values, err := rows.Values()
 		require.NoError(t, err)
-		require.Equal(t, values, []any{"foo"})
+		require.Equal(t, []any{"foo"}, values)
 	})
 }

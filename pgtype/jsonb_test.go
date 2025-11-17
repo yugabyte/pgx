@@ -2,11 +2,14 @@ package pgtype_test
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	pgx "github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgtype"
 	"github.com/yugabyte/pgx/v5/pgxtest"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJSONBTranscode(t *testing.T) {
@@ -63,11 +66,11 @@ func TestJSONBCodecUnmarshalSQLNull(t *testing.T) {
 		// A string cannot scan a NULL.
 		str := "foobar"
 		err = conn.QueryRow(ctx, "select null::jsonb").Scan(&str)
-		require.EqualError(t, err, "can't scan into dest[0]: cannot scan NULL into *string")
+		require.EqualError(t, err, "can't scan into dest[0] (col: jsonb): cannot scan NULL into *string")
 
 		// A non-string cannot scan a NULL.
 		err = conn.QueryRow(ctx, "select null::jsonb").Scan(&n)
-		require.EqualError(t, err, "can't scan into dest[0]: cannot scan NULL into *int")
+		require.EqualError(t, err, "can't scan into dest[0] (col: jsonb): cannot scan NULL into *int")
 	})
 }
 
@@ -78,5 +81,29 @@ func TestJSONBCodecEncodeJSONMarshalerThatCanBeWrapped(t *testing.T) {
 		err := conn.QueryRow(context.Background(), "select $1::jsonb", &ParentIssue1681{}).Scan(&jsonStr)
 		require.NoError(t, err)
 		require.Equal(t, `{"custom": "thing"}`, jsonStr) // Note that unlike json, jsonb reformats the JSON string.
+	})
+}
+
+func TestJSONBCodecCustomMarshal(t *testing.T) {
+	connTestRunner := defaultConnTestRunner
+	connTestRunner.AfterConnect = func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name: "jsonb", OID: pgtype.JSONBOID, Codec: &pgtype.JSONBCodec{
+				Marshal: func(v any) ([]byte, error) {
+					return []byte(`{"custom":"value"}`), nil
+				},
+				Unmarshal: func(data []byte, v any) error {
+					return json.Unmarshal([]byte(`{"custom":"value"}`), v)
+				},
+			},
+		})
+	}
+
+	pgxtest.RunValueRoundTripTests(context.Background(), t, connTestRunner, pgxtest.KnownOIDQueryExecModes, "jsonb", []pgxtest.ValueRoundTripTest{
+		// There is space between "custom" and "value" in jsonb type.
+		{map[string]any{"something": "else"}, new(string), isExpectedEq(`{"custom": "value"}`)},
+		{[]byte(`{"something":"else"}`), new(map[string]any), func(v any) bool {
+			return reflect.DeepEqual(v, map[string]any{"custom": "value"})
+		}},
 	})
 }

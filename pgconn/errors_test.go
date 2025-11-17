@@ -19,18 +19,18 @@ func TestConfigError(t *testing.T) {
 			expectedMsg: "cannot parse `postgresql://foo:xxxxx@host`: msg",
 		},
 		{
-			name:        "dsn with password unquoted",
+			name:        "keyword/value with password unquoted",
 			err:         pgconn.NewParseConfigError("host=host password=password user=user", "msg", nil),
 			expectedMsg: "cannot parse `host=host password=xxxxx user=user`: msg",
 		},
 		{
-			name:        "dsn with password quoted",
+			name:        "keyword/value with password quoted",
 			err:         pgconn.NewParseConfigError("host=host password='pass word' user=user", "msg", nil),
 			expectedMsg: "cannot parse `host=host password=xxxxx user=user`: msg",
 		},
 		{
 			name:        "weird url",
-			err:         pgconn.NewParseConfigError("postgresql://foo::pasword@host:1:", "msg", nil),
+			err:         pgconn.NewParseConfigError("postgresql://foo::password@host:1:", "msg", nil),
 			expectedMsg: "cannot parse `postgresql://foo:xxxxx@host:1:`: msg",
 		},
 		{

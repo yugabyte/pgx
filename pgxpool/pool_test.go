@@ -43,10 +43,11 @@ func TestConnectConfig(t *testing.T) {
 func TestParseConfigExtractsPoolArguments(t *testing.T) {
 	t.Parallel()
 
-	config, err := pgxpool.ParseConfig("pool_max_conns=42 pool_min_conns=1")
+	config, err := pgxpool.ParseConfig("pool_max_conns=42 pool_min_conns=1 pool_min_idle_conns=2")
 	assert.NoError(t, err)
 	assert.EqualValues(t, 42, config.MaxConns)
 	assert.EqualValues(t, 1, config.MinConns)
+	assert.EqualValues(t, 2, config.MinIdleConns)
 	assert.NotContains(t, config.ConnConfig.Config.RuntimeParams, "pool_max_conns")
 	assert.NotContains(t, config.ConnConfig.Config.RuntimeParams, "pool_min_conns")
 }
@@ -203,6 +204,64 @@ func TestPoolAcquireChecksIdleConns(t *testing.T) {
 	require.NotContains(t, pids, cPID)
 }
 
+func TestPoolAcquireChecksIdleConnsWithShouldPing(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	controllerConn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer controllerConn.Close(ctx)
+
+	config, err := pgxpool.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+
+	// Replace the default ShouldPing func
+	var shouldPingLastCalledWith *pgxpool.ShouldPingParams
+	config.ShouldPing = func(ctx context.Context, params pgxpool.ShouldPingParams) bool {
+		shouldPingLastCalledWith = &params
+		return false
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	c, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+
+	// All conns are dead they don't know it and neither does the pool.
+	require.EqualValues(t, 3, pool.Stat().TotalConns())
+
+	// Wait long enough so the pool will realize it needs to check the connections.
+	time.Sleep(time.Second)
+
+	// Pool should try all existing connections and find them dead, then create a new connection which should successfully ping.
+	err = pool.Ping(ctx)
+	require.NoError(t, err)
+
+	// The original 3 conns should have been terminated and the a new conn established for the ping.
+	require.EqualValues(t, 1, pool.Stat().TotalConns())
+	c, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+
+	cPID := c.Conn().PgConn().PID()
+	c.Release()
+
+	time.Sleep(time.Millisecond * 200)
+
+	c, err = pool.Acquire(ctx)
+	require.NoError(t, err)
+	conn := c.Conn()
+
+	require.NotNil(t, shouldPingLastCalledWith)
+	assert.Equal(t, conn, shouldPingLastCalledWith.Conn)
+	assert.InDelta(t, time.Millisecond*200, shouldPingLastCalledWith.IdleDuration, float64(time.Millisecond*100))
+
+	c.Release()
+}
+
 func TestPoolAcquireFunc(t *testing.T) {
 	t.Parallel()
 
@@ -327,6 +386,64 @@ func TestPoolBeforeAcquire(t *testing.T) {
 	waitForReleaseToComplete()
 
 	assert.EqualValues(t, 12, acquireAttempts)
+}
+
+func TestPoolPrepareConn(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	config, err := pgxpool.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+
+	acquireAttempts := 0
+
+	config.PrepareConn = func(context.Context, *pgx.Conn) (bool, error) {
+		acquireAttempts++
+		var err error
+		if acquireAttempts%3 == 0 {
+			err = errors.New("PrepareConn error")
+		}
+		return acquireAttempts%2 == 0, err
+	}
+
+	db, err := pgxpool.NewWithConfig(ctx, config)
+	require.NoError(t, err)
+	t.Cleanup(db.Close)
+
+	var errorCount int
+	conns := make([]*pgxpool.Conn, 0, 4)
+	for {
+		conn, err := db.Acquire(ctx)
+		if err != nil {
+			errorCount++
+			continue
+		}
+		conns = append(conns, conn)
+		if len(conns) == 4 {
+			break
+		}
+	}
+	const wantErrorCount = 3
+	assert.Equal(t, wantErrorCount, errorCount, "Acquire() should have failed %d times", wantErrorCount)
+
+	for _, c := range conns {
+		c.Release()
+	}
+	waitForReleaseToComplete()
+
+	assert.EqualValues(t, len(conns)*2+wantErrorCount-1, acquireAttempts)
+
+	conns = db.AcquireAllIdle(ctx)
+	assert.Len(t, conns, 1)
+
+	for _, c := range conns {
+		c.Release()
+	}
+	waitForReleaseToComplete()
+
+	assert.EqualValues(t, 14, acquireAttempts)
 }
 
 func TestPoolAfterRelease(t *testing.T) {
@@ -676,7 +793,6 @@ func TestPoolQuery(t *testing.T) {
 	stats = pool.Stat()
 	assert.EqualValues(t, 0, stats.AcquiredConns())
 	assert.EqualValues(t, 1, stats.TotalConns())
-
 }
 
 func TestPoolQueryRow(t *testing.T) {
@@ -1081,9 +1197,9 @@ func TestConnectEagerlyReachesMinPoolSize(t *testing.T) {
 	acquireAttempts := int64(0)
 	connectAttempts := int64(0)
 
-	config.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
+	config.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
 		atomic.AddInt64(&acquireAttempts, 1)
-		return true
+		return true, nil
 	}
 	config.BeforeConnect = func(ctx context.Context, cfg *pgx.ConnConfig) error {
 		atomic.AddInt64(&connectAttempts, 1)
@@ -1104,7 +1220,6 @@ func TestConnectEagerlyReachesMinPoolSize(t *testing.T) {
 	}
 
 	t.Fatal("did not reach min pool size")
-
 }
 
 func TestPoolSendBatchBatchCloseTwice(t *testing.T) {
