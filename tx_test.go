@@ -158,6 +158,8 @@ func TestTxCommitSerializationFailure(t *testing.T) {
 		t.Skip("Skipping due to known server issue: (https://github.com/cockroachdb/cockroach/issues/60754)")
 	}
 
+	pgxtest.SkipYugabyteDB(t, c1, "context deadline exceeded in YugabyteDB")
+
 	c2 := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, c2)
 
@@ -301,6 +303,8 @@ func TestBeginFunc(t *testing.T) {
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
+
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test in YugabyteDB")
 
 	createSql := `
     create temporary table foo(

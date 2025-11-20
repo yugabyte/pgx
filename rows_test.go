@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"strings"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -265,6 +266,8 @@ func TestCollectOneRowPrefersPostgreSQLErrorOverErrNoRows(t *testing.T) {
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		_, err := conn.Exec(ctx, `create temporary table t (name text not null unique)`)
 		require.NoError(t, err)
+
+		pgxtest.SkipYugabyteDB(t, conn, "Temporay table issue in YugabyteDB")
 
 		var name string
 		rows, _ := conn.Query(ctx, `insert into t (name) values ('foo') returning name`)
@@ -565,7 +568,7 @@ func ExampleRowToStructByPos() {
 		return
 	}
 
-	if conn.PgConn().ParameterStatus("crdb_version") != "" {
+	if conn.PgConn().ParameterStatus("crdb_version") != "" || strings.Contains(conn.PgConn().ParameterStatus("server_version"), "YB") {
 		// Skip test / example when running on CockroachDB. Since an example can't be skipped fake success instead.
 		fmt.Println(`Cheeseburger: $10
 Fries: $5

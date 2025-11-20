@@ -161,6 +161,7 @@ func TestConnSendBatchQueuedQuery(t *testing.T) {
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server serial type is incompatible with test")
+		pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 		sql := `create temporary table ledger(
 	  id serial primary key,

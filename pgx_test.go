@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"strings"
 
 	"github.com/yugabyte/pgx/v5"
 	_ "github.com/yugabyte/pgx/v5/stdlib"
@@ -17,6 +18,18 @@ func skipCockroachDB(t testing.TB, msg string) {
 	defer conn.Close(context.Background())
 
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
+		t.Skip(msg)
+	}
+}
+
+func skipYugabyteDB(t testing.TB, msg string) {
+	conn, err := pgx.Connect(context.Background(), os.Getenv("PGX_TEST_DATABASE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(context.Background())
+
+	if strings.Contains(conn.PgConn().ParameterStatus("server_version"), "YB") {
 		t.Skip(msg)
 	}
 }

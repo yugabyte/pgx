@@ -205,6 +205,9 @@ func TestConnQueryValuesWithUnregisteredOID(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback(ctx)
 
+	_, err = conn.Exec(ctx, "drop type if exists fruit")
+	require.NoError(t, err)
+
 	_, err = tx.Exec(ctx, "create type fruit as enum('orange', 'apple', 'pear')")
 	require.NoError(t, err)
 
@@ -229,6 +232,9 @@ func TestConnQueryArgsAndScanWithUnregisteredOID(t *testing.T) {
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
+
+		_, err = conn.Exec(ctx, "drop type if exists fruit")
+		require.NoError(t, err)
 
 		_, err = tx.Exec(ctx, "create type fruit as enum('orange', 'apple', 'pear')")
 		require.NoError(t, err)
@@ -1192,6 +1198,8 @@ func TestConnQueryDatabaseSQLDriverValuerCalledOnNilPointerImplementers(t *testi
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
+	pgxtest.SkipYugabyteDB(t, conn, "Temporary Tables with JSON type.")
+
 	mustExec(t, conn, "create temporary table t(v json not null)")
 
 	var v *nilPointerAsEmptyJSONObject
@@ -1241,6 +1249,8 @@ func TestConnQueryDatabaseSQLDriverValuerCalledOnNilSliceImplementers(t *testing
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
+
+	pgxtest.SkipYugabyteDB(t, conn, "Temporary Tables with JSON type.")
 
 	mustExec(t, conn, "create temporary table t(v json not null)")
 
@@ -1298,6 +1308,8 @@ func TestConnQueryDatabaseSQLDriverValuerCalledOnNilMapImplementers(t *testing.T
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
+
+	pgxtest.SkipYugabyteDB(t, conn, "Temporary Tables with JSON type.")
 
 	mustExec(t, conn, "create temporary table t(v json not null)")
 
@@ -2063,6 +2075,8 @@ func TestQueryErrorWithDisabledStatementCache(t *testing.T) {
 	conn := mustConnect(t, config)
 	defer closeConn(t, conn)
 
+	pgxtest.SkipYugabyteDB(t, conn, "Temporary Table issue with YugabyteDB.")
+
 	_, err := conn.Exec(context.Background(), "create temporary table t_unq(id text primary key);")
 	require.NoError(t, err)
 
@@ -2179,7 +2193,7 @@ func ExampleConn_Query() {
 		return
 	}
 
-	if conn.PgConn().ParameterStatus("crdb_version") != "" {
+	if conn.PgConn().ParameterStatus("crdb_version") != "" || strings.Contains(conn.PgConn().ParameterStatus("server_version"), "YB") {
 		// Skip test / example when running on CockroachDB. Since an example can't be skipped fake success instead.
 		fmt.Println(`Cheeseburger: $10
 Fries: $5

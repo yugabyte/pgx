@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/internal/sanitize"
+	"github.com/yugabyte/pgx/v5/internal/sanitize"
 )
 
 var benchmarkSanitizeResult string
