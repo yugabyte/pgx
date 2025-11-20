@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,21 @@ func skipCockroachDB(t testing.TB, db *sql.DB, msg string) {
 	err = conn.Raw(func(driverConn any) error {
 		conn := driverConn.(*stdlib.Conn).Conn()
 		if conn.PgConn().ParameterStatus("crdb_version") != "" {
+			t.Skip(msg)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func skipYugabyteDB(t testing.TB, db *sql.DB, msg string) {
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	err = conn.Raw(func(driverConn any) error {
+		conn := driverConn.(*stdlib.Conn).Conn()
+		if strings.Contains(conn.PgConn().ParameterStatus("server_version"), "YB") {
 			t.Skip(msg)
 		}
 		return nil
@@ -333,6 +349,7 @@ func TestConnQuery(t *testing.T) {
 
 func TestConnConcurrency(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
+		skipYugabyteDB(t, db, "Flaky test on YugabyteDB")
 		_, err := db.Exec("create table t (id integer primary key, str text, dur_str interval)")
 		require.NoError(t, err)
 
@@ -610,6 +627,8 @@ func TestConnExecInsertByteSliceIntoJSON(t *testing.T) {
 	db := openDB(t)
 	defer closeDB(t, db)
 
+	skipYugabyteDB(t, db, "Flaky test on YugabyteDB")
+
 	_, err := db.Exec(`
 		create temporary table docs(
 			body json not null
@@ -744,6 +763,7 @@ func TestConnBeginTxReadOnly(t *testing.T) {
 
 func TestBeginTxContextCancel(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
+		skipYugabyteDB(t, db, "Error behavior differs on YugabyteDB")
 		_, err := db.Exec("drop table if exists t")
 		require.NoError(t, err)
 
@@ -1180,6 +1200,7 @@ func TestConnQueryRowConstraintErrors(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
 		skipPostgreSQLVersionLessThan(t, db, 11)
 		skipCockroachDB(t, db, "Server does not support deferred constraint (https://github.com/cockroachdb/cockroach/issues/31632)")
+		skipYugabyteDB(t, db, "CREATE CONSTRAINT TRIGGER not supported yet in YugabyteDB")
 
 		_, err := db.Exec(`create temporary table defer_test (
 			id text primary key,

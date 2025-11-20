@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"strings"
 
 	"github.com/yugabyte/pgx/v5"
 )
@@ -150,6 +151,13 @@ func RunValueRoundTripTests(
 // SkipCockroachDB calls Skip on t with msg if the connection is to a CockroachDB server.
 func SkipCockroachDB(t testing.TB, conn *pgx.Conn, msg string) {
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
+		t.Skip(msg)
+	}
+}
+
+// SkipYugabyteDB calls Skip on t with msg if the connection is to a YugabyteDB server.
+func SkipYugabyteDB(t testing.TB, conn *pgx.Conn, msg string) {
+	if strings.Contains(conn.PgConn().ParameterStatus("server_version"), "YB") {
 		t.Skip(msg)
 	}
 }

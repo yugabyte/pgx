@@ -1684,6 +1684,10 @@ func TestConnOnNotification(t *testing.T) {
 		t.Skip("Server does not support LISTEN / NOTIFY (https://github.com/cockroachdb/cockroach/issues/41522)")
 	}
 
+	if strings.Contains(pgConn.ParameterStatus("server_version"), "YB") {
+		t.Skip("YugabyteDB does not support LISTEN / NOTIFY")
+	}
+
 	_, err = pgConn.Exec(ctx, "listen foo").ReadAll()
 	require.NoError(t, err)
 
@@ -1721,6 +1725,10 @@ func TestConnWaitForNotification(t *testing.T) {
 
 	if pgConn.ParameterStatus("crdb_version") != "" {
 		t.Skip("Server does not support LISTEN / NOTIFY (https://github.com/cockroachdb/cockroach/issues/41522)")
+	}
+
+	if strings.Contains(pgConn.ParameterStatus("server_version"), "YB") {
+		t.Skip("YugabyteDB does not support LISTEN / NOTIFY")
 	}
 
 	_, err = pgConn.Exec(ctx, "listen foo").ReadAll()

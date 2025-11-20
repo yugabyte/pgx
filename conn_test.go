@@ -623,6 +623,8 @@ func TestListenNotify(t *testing.T) {
 		t.Skip("Server does not support LISTEN / NOTIFY (https://github.com/cockroachdb/cockroach/issues/41522)")
 	}
 
+	pgxtest.SkipYugabyteDB(t, listener, "YugabyteDB does not support LISTEN / NOTIFY")
+
 	mustExec(t, listener, "listen chat")
 
 	notifier := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
@@ -745,6 +747,7 @@ func TestListenNotifySelfNotification(t *testing.T) {
 	defer closeConn(t, conn)
 
 	pgxtest.SkipCockroachDB(t, conn, "Server does not support LISTEN / NOTIFY (https://github.com/cockroachdb/cockroach/issues/41522)")
+	pgxtest.SkipYugabyteDB(t, conn, "YugabyteDB does not support LISTEN / NOTIFY")
 
 	mustExec(t, conn, "listen self")
 
@@ -951,7 +954,8 @@ func TestUnregisteredTypeUsableAsStringArgumentAndBaseResult(t *testing.T) {
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support domain types (https://github.com/cockroachdb/cockroach/issues/27796)")
-
+		pgxtest.SkipYugabyteDB(t, conn, "YugabyteDB does not support uint64 domain type")
+		
 		var n uint64
 		err := conn.QueryRow(context.Background(), "select $1::uint64", "42").Scan(&n)
 		if err != nil {
@@ -970,6 +974,7 @@ func TestDomainType(t *testing.T) {
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support domain types (https://github.com/cockroachdb/cockroach/issues/27796)")
+		pgxtest.SkipYugabyteDB(t, conn, "YugabyteDB does not support uint64 domain type")
 
 		// Domain type uint64 is a PostgreSQL domain of underlying type numeric.
 
@@ -1012,6 +1017,9 @@ func TestLoadTypeSameNameInDifferentSchemas(t *testing.T) {
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
 
+		_, err = tx.Exec(ctx, `drop schema if exists pgx_a cascade; drop schema if exists pgx_b cascade;`)
+		require.NoError(t, err)
+
 		_, err = tx.Exec(ctx, `create schema pgx_a;
 create type pgx_a.point as (a text, b text);
 create schema pgx_b;
@@ -1052,7 +1060,8 @@ func TestLoadCompositeType(t *testing.T) {
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support composite types (https://github.com/cockroachdb/cockroach/issues/27792)")
-
+		pgxtest.SkipYugabyteDB(t, conn, "ALTER TYPE DROP ATTRIBUTE not supported yet in YugabyteDB")
+		
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
@@ -1078,6 +1087,9 @@ func TestLoadRangeType(t *testing.T) {
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
+
+		_, err = tx.Exec(ctx, "drop type if exists examplefloatrange")
+		require.NoError(t, err)
 
 		_, err = tx.Exec(ctx, "create type examplefloatrange as range (subtype=float8, subtype_diff=float8mi)")
 		require.NoError(t, err)
@@ -1113,6 +1125,11 @@ func TestLoadMultiRangeType(t *testing.T) {
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
+
+		_, err = tx.Exec(ctx, "drop type if exists examplefloatrange")
+		require.NoError(t, err)
+		_, err = tx.Exec(ctx, "drop type if exists examplefloatmultirange")
+		require.NoError(t, err)
 
 		_, err = tx.Exec(ctx, "create type examplefloatrange as range (subtype=float8, subtype_diff=float8mi, multirange_type_name=examplefloatmultirange)")
 		require.NoError(t, err)

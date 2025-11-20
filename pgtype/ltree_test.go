@@ -10,6 +10,7 @@ import (
 
 func TestLtreeCodec(t *testing.T) {
 	skipCockroachDB(t, "Server does not support type ltree")
+	skipYugabyteDB(t, "YugabyteDB does not support ltree type")
 
 	pgxtest.RunValueRoundTripTests(context.Background(), t, defaultConnTestRunner, pgxtest.KnownOIDQueryExecModes, "ltree", []pgxtest.ValueRoundTripTest{
 		{

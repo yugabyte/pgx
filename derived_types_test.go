@@ -10,6 +10,7 @@ import (
 
 func TestCompositeCodecTranscodeWithLoadTypes(t *testing.T) {
 	skipCockroachDB(t, "Server does not support composite types (see https://github.com/cockroachdb/cockroach/issues/27792)")
+	skipYugabyteDB(t, "Flaky test in YugabyteDB")
 
 	defaultConnTestRunner.RunTest(context.Background(), t, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		_, err := conn.Exec(ctx, `

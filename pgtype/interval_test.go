@@ -7,6 +7,7 @@ import (
 
 	"github.com/yugabyte/pgx/v5/pgtype"
 	"github.com/yugabyte/pgx/v5/pgxtest"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIntervalCodec(t *testing.T) {

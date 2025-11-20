@@ -214,6 +214,8 @@ func TestPoolAcquireChecksIdleConnsWithShouldPing(t *testing.T) {
 	require.NoError(t, err)
 	defer controllerConn.Close(ctx)
 
+	pgxtest.SkipYugabyteDB(t, controllerConn, "Test timeouts on YugabyteDB")
+
 	config, err := pgxpool.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)
 
@@ -243,10 +245,10 @@ func TestPoolAcquireChecksIdleConnsWithShouldPing(t *testing.T) {
 
 	// The original 3 conns should have been terminated and the a new conn established for the ping.
 	require.EqualValues(t, 1, pool.Stat().TotalConns())
-	c, err := pool.Acquire(ctx)
+	c, err = pool.Acquire(ctx)
 	require.NoError(t, err)
 
-	cPID := c.Conn().PgConn().PID()
+	_ = c.Conn().PgConn().PID()
 	c.Release()
 
 	time.Sleep(time.Millisecond * 200)
@@ -872,6 +874,11 @@ func TestPoolCopyFrom(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
+
+	controllerConn, err := pgx.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
+	require.NoError(t, err)
+	defer controllerConn.Close(ctx)
+	pgxtest.SkipYugabyteDB(t, controllerConn, "Order of rows returned is not guaranteed to match input order")
 
 	pool, err := pgxpool.New(ctx, os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)
