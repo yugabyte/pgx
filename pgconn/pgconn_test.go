@@ -913,6 +913,10 @@ func TestConnExecDeferredError(t *testing.T) {
 		t.Skip("Server does not support deferred constraint (https://github.com/cockroachdb/cockroach/issues/31632)")
 	}
 
+	if strings.Contains(pgConn.ParameterStatus("server_version"), "YB") {
+		t.Skip("Flaky test with YugabyteDB")
+	}
+
 	setupSQL := `create temporary table t (
 		id text primary key,
 		n int not null,
@@ -1020,6 +1024,10 @@ func TestConnExecParamsDeferredError(t *testing.T) {
 
 	if pgConn.ParameterStatus("crdb_version") != "" {
 		t.Skip("Server does not support deferred constraint (https://github.com/cockroachdb/cockroach/issues/31632)")
+	}
+
+	if strings.Contains(pgConn.ParameterStatus("server_version"), "YB") {
+		t.Skip("Flaky test with YugabyteDB")
 	}
 
 	setupSQL := `create temporary table t (
@@ -1804,6 +1812,11 @@ func TestConnCopyToSmall(t *testing.T) {
 		t.Skip("Server does support COPY TO")
 	}
 
+	if strings.Contains(pgConn.ParameterStatus("server_version"), "YB") {
+		t.Skip("Flaky Test on YugabyteDB")
+	}
+	
+
 	_, err = pgConn.Exec(ctx, `create temporary table foo(
 		a int2,
 		b int4,
@@ -2060,6 +2073,10 @@ func TestConnCopyFromCanceled(t *testing.T) {
 	pgConn, err := pgconn.Connect(ctx, os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)
 	defer closeConn(t, pgConn)
+
+	if strings.Contains(pgConn.ParameterStatus("server_version"), "YB") {
+		t.Skip("Flaky Test on YugabyteDB")
+	}
 
 	_, err = pgConn.Exec(ctx, `create temporary table foo(
 		a int4,
