@@ -761,6 +761,7 @@ func TestTxSendBatchRollback(t *testing.T) {
 	  id serial primary key,
 	  description varchar not null
 	);`
+		pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 		mustExec(t, conn, sql)
 
 		tx, _ := conn.Begin(ctx)

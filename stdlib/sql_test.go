@@ -1338,6 +1338,7 @@ func TestCheckIdleConn(t *testing.T) {
 	defer closeDB(t, controllerConn)
 
 	skipCockroachDB(t, controllerConn, "Server does not support pg_terminate_backend() (https://github.com/cockroachdb/cockroach/issues/35897)")
+	skipYugabyteDB(t, controllerConn, "Flaky test in YugabyteDB")
 
 	db, err := sql.Open("pgx", os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)
