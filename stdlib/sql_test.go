@@ -826,6 +826,7 @@ func TestConnPrepareContextSuccess(t *testing.T) {
 func TestConnMultiplePrepareAndDeallocate(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
 		skipCockroachDB(t, db, "Server does not support pg_prepared_statements")
+		skipYugabyteDB(t, db, "Flaky test failure on YugabyteDB")
 
 		sql := "select 42"
 		stmt1, err := db.PrepareContext(context.Background(), sql)

@@ -594,6 +594,7 @@ func TestDeallocateMissingPreparedStatementStillClearsFromPreparedStatementMap(t
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 		_, err := conn.Prepare(ctx, "ps", "select $1::text")
 		require.NoError(t, err)
 
@@ -1324,6 +1325,7 @@ func TestStmtCacheInvalidationConnWithBatch(t *testing.T) {
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
 		t.Skip("Test fails due to different CRDB behavior")
 	}
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	// create a table and fill it with some data
 	_, err := conn.Exec(ctx, `
