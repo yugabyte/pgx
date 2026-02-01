@@ -304,6 +304,7 @@ func TestQueryCloseRowsEarly(t *testing.T) {
 
 func TestConnExec(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
+		skipYugabyteDB(t, db, "Flaky test on YugabyteDB")
 		_, err := db.Exec("create temporary table t(a varchar not null)")
 		require.NoError(t, err)
 
