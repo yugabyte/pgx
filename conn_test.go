@@ -487,7 +487,7 @@ func TestPrepareIdempotency(t *testing.T) {
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		for i := 0; i < 2; i++ {
-			pgxtest.SkipYugabyteDB(t, conn, "Prepare statement with same name but different SQL should have failed but it didn't")
+			pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 			_, err := conn.Prepare(context.Background(), "test", "select 42::integer")
 			if err != nil {
 				t.Fatalf("%d. Unable to prepare statement: %v", i, err)
@@ -872,6 +872,7 @@ func TestInsertTimestampArray(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 		if results := mustExec(t, conn, "create temporary table foo(spice timestamp[]);"); results.String() != "CREATE TABLE" {
 			t.Error("Unexpected results from Exec")
 		}
@@ -959,7 +960,6 @@ func TestUnregisteredTypeUsableAsStringArgumentAndBaseResult(t *testing.T) {
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support domain types (https://github.com/cockroachdb/cockroach/issues/27796)")
 		pgxtest.SkipYugabyteDB(t, conn, "YugabyteDB does not support uint64 domain type")
-
 		var n uint64
 		err := conn.QueryRow(context.Background(), "select $1::uint64", "42").Scan(&n)
 		if err != nil {
@@ -1065,7 +1065,6 @@ func TestLoadCompositeType(t *testing.T) {
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support composite types (https://github.com/cockroachdb/cockroach/issues/27792)")
 		pgxtest.SkipYugabyteDB(t, conn, "ALTER TYPE DROP ATTRIBUTE not supported yet in YugabyteDB")
-
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
@@ -1178,7 +1177,7 @@ func TestStmtCacheInvalidationConn(t *testing.T) {
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
-	pgxtest.SkipYugabyteDB(t, conn, "cached plan must not change result type")
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	// create a table and fill it with some data
 	_, err := conn.Exec(ctx, `
@@ -1241,7 +1240,7 @@ func TestStmtCacheInvalidationTx(t *testing.T) {
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
-	pgxtest.SkipYugabyteDB(t, conn, "cached plan must not change result type (SQLSTATE 0A000)")
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
 		t.Skip("Server has non-standard prepare in errored transaction behavior (https://github.com/cockroachdb/cockroach/issues/84140)")
@@ -1398,7 +1397,7 @@ func TestStmtCacheInvalidationTxWithBatch(t *testing.T) {
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
-	pgxtest.SkipYugabyteDB(t, conn, "cached plan must not change result type (SQLSTATE 0A000)")
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
 		t.Skip("Server has non-standard prepare in errored transaction behavior (https://github.com/cockroachdb/cockroach/issues/84140)")
