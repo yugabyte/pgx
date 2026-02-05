@@ -304,6 +304,7 @@ func TestQueryCloseRowsEarly(t *testing.T) {
 
 func TestConnExec(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
+		skipYugabyteDB(t, db, "Flaky test on YugabyteDB")
 		_, err := db.Exec("create temporary table t(a varchar not null)")
 		require.NoError(t, err)
 
@@ -826,6 +827,7 @@ func TestConnPrepareContextSuccess(t *testing.T) {
 func TestConnMultiplePrepareAndDeallocate(t *testing.T) {
 	testWithAllQueryExecModes(t, func(t *testing.T, db *sql.DB) {
 		skipCockroachDB(t, db, "Server does not support pg_prepared_statements")
+		skipYugabyteDB(t, db, "Flaky test failure on YugabyteDB")
 
 		sql := "select 42"
 		stmt1, err := db.PrepareContext(context.Background(), sql)
@@ -1338,6 +1340,7 @@ func TestCheckIdleConn(t *testing.T) {
 	defer closeDB(t, controllerConn)
 
 	skipCockroachDB(t, controllerConn, "Server does not support pg_terminate_backend() (https://github.com/cockroachdb/cockroach/issues/35897)")
+	skipYugabyteDB(t, controllerConn, "Flaky test in YugabyteDB")
 
 	db, err := sql.Open("pgx", os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)

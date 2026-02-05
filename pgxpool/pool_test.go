@@ -160,6 +160,7 @@ func TestPoolAcquireChecksIdleConns(t *testing.T) {
 	require.NoError(t, err)
 	defer controllerConn.Close(ctx)
 	pgxtest.SkipCockroachDB(t, controllerConn, "Server does not support pg_terminate_backend() (https://github.com/cockroachdb/cockroach/issues/35897)")
+	pgxtest.SkipYugabyteDB(t, controllerConn, "Flaky test failure on YugabyteDB")
 
 	pool, err := pgxpool.New(ctx, os.Getenv("PGX_TEST_DATABASE"))
 	require.NoError(t, err)

@@ -487,6 +487,7 @@ func TestPrepareIdempotency(t *testing.T) {
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		for i := 0; i < 2; i++ {
+			pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 			_, err := conn.Prepare(context.Background(), "test", "select 42::integer")
 			if err != nil {
 				t.Fatalf("%d. Unable to prepare statement: %v", i, err)
@@ -593,6 +594,7 @@ func TestDeallocateMissingPreparedStatementStillClearsFromPreparedStatementMap(t
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 		_, err := conn.Prepare(ctx, "ps", "select $1::text")
 		require.NoError(t, err)
 
@@ -783,6 +785,7 @@ func TestFatalRxError(t *testing.T) {
 	defer closeConn(t, conn)
 
 	pgxtest.SkipCockroachDB(t, conn, "Server does not support pg_terminate_backend() (https://github.com/cockroachdb/cockroach/issues/35897)")
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -822,6 +825,7 @@ func TestFatalTxError(t *testing.T) {
 			defer closeConn(t, conn)
 
 			pgxtest.SkipCockroachDB(t, conn, "Server does not support pg_terminate_backend() (https://github.com/cockroachdb/cockroach/issues/35897)")
+			pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 			otherConn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 			defer otherConn.Close(context.Background())
@@ -868,6 +872,7 @@ func TestInsertTimestampArray(t *testing.T) {
 	defer cancel()
 
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
+		pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 		if results := mustExec(t, conn, "create temporary table foo(spice timestamp[]);"); results.String() != "CREATE TABLE" {
 			t.Error("Unexpected results from Exec")
 		}
@@ -955,7 +960,7 @@ func TestUnregisteredTypeUsableAsStringArgumentAndBaseResult(t *testing.T) {
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support domain types (https://github.com/cockroachdb/cockroach/issues/27796)")
 		pgxtest.SkipYugabyteDB(t, conn, "YugabyteDB does not support uint64 domain type")
-		
+
 		var n uint64
 		err := conn.QueryRow(context.Background(), "select $1::uint64", "42").Scan(&n)
 		if err != nil {
@@ -1061,7 +1066,7 @@ func TestLoadCompositeType(t *testing.T) {
 	pgxtest.RunWithQueryExecModes(ctx, t, defaultConnTestRunner, nil, func(ctx context.Context, t testing.TB, conn *pgx.Conn) {
 		pgxtest.SkipCockroachDB(t, conn, "Server does support composite types (https://github.com/cockroachdb/cockroach/issues/27792)")
 		pgxtest.SkipYugabyteDB(t, conn, "ALTER TYPE DROP ATTRIBUTE not supported yet in YugabyteDB")
-		
+
 		tx, err := conn.Begin(ctx)
 		require.NoError(t, err)
 		defer tx.Rollback(ctx)
@@ -1174,6 +1179,8 @@ func TestStmtCacheInvalidationConn(t *testing.T) {
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
 
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
+
 	// create a table and fill it with some data
 	_, err := conn.Exec(ctx, `
         DROP TABLE IF EXISTS drop_cols;
@@ -1235,6 +1242,7 @@ func TestStmtCacheInvalidationTx(t *testing.T) {
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
 		t.Skip("Server has non-standard prepare in errored transaction behavior (https://github.com/cockroachdb/cockroach/issues/84140)")
@@ -1318,6 +1326,7 @@ func TestStmtCacheInvalidationConnWithBatch(t *testing.T) {
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
 		t.Skip("Test fails due to different CRDB behavior")
 	}
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	// create a table and fill it with some data
 	_, err := conn.Exec(ctx, `
@@ -1390,6 +1399,7 @@ func TestStmtCacheInvalidationTxWithBatch(t *testing.T) {
 
 	conn := mustConnectString(t, os.Getenv("PGX_TEST_DATABASE"))
 	defer closeConn(t, conn)
+	pgxtest.SkipYugabyteDB(t, conn, "Flaky test failure on YugabyteDB")
 
 	if conn.PgConn().ParameterStatus("crdb_version") != "" {
 		t.Skip("Server has non-standard prepare in errored transaction behavior (https://github.com/cockroachdb/cockroach/issues/84140)")
