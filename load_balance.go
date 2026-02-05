@@ -337,7 +337,7 @@ func refreshLoadInfo(li *ClusterLoadInfo) error {
 		li.config.Fallbacks = ctrlConfig.Fallbacks
 		li.config.connString = ctrlConfig.connString
 		li.config.ConnectTimeout = CONTROL_CONN_TIMEOUT
-		li.controlConn, err = connect(li.ctrlCtx, ctrlConfig)
+		li.controlConn, err = connect(li.ctrlCtx, li.config)
 		if err != nil {
 			log.Printf("Could not create control connection to %s\n", li.config.Host)
 			// remove its hostLoad entry
